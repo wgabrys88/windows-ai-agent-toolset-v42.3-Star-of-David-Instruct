@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Franz</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+--bg:#0d0d0f;--surface:#16161a;--border:#2a2a35;
+--accent:#4a9eff;--accent2:#ff6b35;
+--text:#e8e8f0;--text-dim:#6b6b80;--text-mid:#a0a0b8;
+--ok:#3ecf8e;--warn:#f0a000;--err:#ff4455;
+--radius:8px;--mono:"Cascadia Code","Fira Code","Consolas",monospace;
+--split-x:62%;--split-y:55%;
+--img-scale:40
+}
+html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;font-size:13px}
+#root{display:grid;width:100vw;height:calc(100vh - 22px);grid-template-columns:var(--split-x) 4px 1fr;grid-template-rows:var(--split-y) 4px 1fr}
+#gutter-v{grid-column:2;grid-row:1/4;background:var(--border);cursor:col-resize;transition:background .15s;z-index:10}
+#gutter-v:hover{background:var(--accent)}
+#gutter-h{grid-column:3;grid-row:2;background:var(--border);cursor:row-resize;transition:background .15s;z-index:10}
+#gutter-h:hover{background:var(--accent)}
+#cross{grid-column:2;grid-row:2;background:var(--accent);cursor:move;z-index:20;border-radius:2px}
+#pane-canvas{grid-column:1;grid-row:1/4;overflow:hidden;position:relative}
+#pane-swarm{grid-column:3;grid-row:1;overflow:hidden;display:flex;flex-direction:column}
+#pane-log{grid-column:3;grid-row:3;overflow:hidden;display:flex;flex-direction:column}
+.pane-header{display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-dim)}
+.pane-header .badge{padding:1px 7px;border-radius:20px;font-size:10px;font-weight:700;letter-spacing:.04em;background:var(--border);color:var(--text-mid)}
+.pane-header .badge.ok{background:#1a3d2e;color:var(--ok)}
+.pane-header .badge.warn{background:#3d2e00;color:var(--warn)}
+.pane-header .badge.err{background:#3d0a10;color:var(--err)}
+.pane-header .hdr-btn{padding:1px 7px;border-radius:4px;font-size:9px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;background:var(--border);color:var(--text-mid);border:none;font-family:inherit}
+.pane-header .hdr-btn:hover{background:var(--accent);color:#fff}
+.pane-body{flex:1;overflow:auto;padding:0;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+#canvas-wrap{width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:#080809;position:relative}
+#canvas-stack{position:relative}
+#canvas-stack canvas{position:absolute;top:0;left:0}
+#c-base{position:relative;display:block}
+#c-overlay{pointer-events:none}
+.canvas-status{position:absolute;bottom:8px;right:10px;font-size:10px;color:var(--text-dim);font-family:var(--mono);pointer-events:none}
+#log-list{font-family:var(--mono);font-size:11px;line-height:1.5;list-style:none;padding:6px 10px}
+#log-list li{padding:1px 0;border-bottom:1px solid #1a1a20}
+#log-list li.info{color:var(--text-dim)}
+#log-list li.ok{color:var(--ok)}
+#log-list li.warn{color:var(--warn)}
+#log-list li.error{color:var(--err)}
+#log-list li time{color:#3a3a50;margin-right:6px}
+#statusbar{position:fixed;bottom:0;left:0;right:0;height:22px;line-height:22px;background:var(--surface);border-top:1px solid var(--border);display:flex;gap:0;font-size:11px;z-index:100}
+.sb-item{padding:0 12px;border-right:1px solid var(--border);color:var(--text-dim)}
+.sb-item span{color:var(--text-mid)}
+.sb-phase{color:var(--accent)!important}
+.swarm-body{flex:1;overflow:auto;padding:0;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+.swarm-card{padding:8px 10px;border-bottom:1px solid var(--border);transition:background .1s}
+.swarm-card-header{display:flex;align-items:center;gap:6px;font-size:11px;margin-bottom:2px}
+.swarm-agent{font-weight:700;font-size:11px;letter-spacing:.04em;padding:1px 6px;border-radius:3px;text-transform:uppercase}
+.swarm-agent.VISIONARY{background:#1a2a40;color:#6ab0ff}
+.swarm-agent.ORCHESTRATOR{background:#2a2a30;color:#a0a0b8}
+.swarm-agent.STORYTELLER{background:#2a1a3a;color:#c88aff}
+.swarm-agent.EXECUTOR{background:#1a3020;color:#5edf8e}
+.swarm-agent.GUIDE{background:#3a2a10;color:#ffaa44}
+.swarm-agent.CRITIC{background:#3a1a1a;color:#ff7070}
+.swarm-agent.ANNOTATOR{background:#2a2a10;color:#e0d060}
+.swarm-agent.PLANNER{background:#1a2a3a;color:#88bbff}
+.swarm-agent.CONDUCTOR{background:#1a3030;color:#5ef0c0}
+.swarm-dir{font-size:10px;color:var(--text-dim);font-family:var(--mono)}
+.swarm-dir.input{color:#6ab0ff}
+.swarm-dir.output{color:#5edf8e}
+.swarm-dir.error{color:var(--err)}
+.swarm-ts{font-size:9px;color:#3a3a50;margin-left:auto;font-family:var(--mono)}
+.swarm-full-text{font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--text);white-space:pre-wrap;word-break:break-word;margin-top:6px;max-height:400px;overflow:auto}
+.swarm-system{font-family:var(--mono);font-size:10px;line-height:1.3;color:#4a4a60;white-space:pre-wrap;word-break:break-word;margin-top:6px;padding:6px 8px;background:#0a0a10;border-radius:4px;border:1px solid #1a1a25;max-height:200px;overflow:auto}
+.swarm-image-full{border:1px solid var(--border);border-radius:4px;margin-top:4px;display:block}
+.swarm-empty{padding:20px;text-align:center;color:var(--text-dim);font-size:12px}
+.swarm-turn-sep{padding:4px 10px;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);background:#0e1420;border-bottom:1px solid var(--border);border-top:1px solid var(--border)}
+*{scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+.sse-dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:4px}
+.sse-dot.live{background:var(--ok)}
+.sse-dot.dead{background:var(--err)}
+.img-bar-wrap{display:flex;align-items:center;gap:4px;padding:0 4px}
+.img-bar-wrap label{font-size:9px;color:var(--text-dim);font-weight:600;letter-spacing:.04em;text-transform:uppercase}
+.img-bar-wrap input[type=range]{width:60px;height:12px;cursor:pointer;accent-color:var(--accent)}
+.img-bar-wrap .img-bar-val{font-size:9px;color:var(--text-mid);font-family:var(--mono);min-width:28px;text-align:right}
+</style>
+</head>
+<body>
+<div id="root">
+<div id="pane-canvas">
+<div class="pane-header">Annotated View<span class="badge" id="badge-img">--</span></div>
+<div id="canvas-wrap">
+<div id="canvas-stack">
+<canvas id="c-base"></canvas>
+<canvas id="c-overlay"></canvas>
+</div>
+<div class="canvas-status" id="canvas-status">no frame</div>
+</div>
+</div>
+<div id="gutter-v"></div>
+<div id="pane-swarm">
+<div class="pane-header">Swarm Wire<button class="hdr-btn" id="btn-toggle-all" title="Collapse/Expand all">MIN</button><button class="hdr-btn" id="btn-save-log" title="Save panel logs">SAVE</button><div class="img-bar-wrap"><label>Img</label><input type="range" id="img-scale-bar" min="10" max="100" value="40" step="5"/><span class="img-bar-val" id="img-scale-val">40%</span></div><span class="badge" id="badge-swarm">0 msgs</span><span class="badge" id="badge-turn">turn 0</span><span class="badge" id="badge-sse"><span class="sse-dot dead"></span>SSE</span></div>
+<div class="swarm-body" id="swarm-body"><div class="swarm-empty">Waiting for swarm activity...</div></div>
+</div>
+<div id="cross"></div>
+<div id="gutter-h"></div>
+<div id="pane-log">
+<div class="pane-header">Event Log<span class="badge" id="badge-phase">init</span></div>
+<div class="pane-body"><ul id="log-list"></ul></div>
+</div>
+</div>
+<div id="statusbar">
+<div class="sb-item">Franz</div>
+<div class="sb-item">phase: <span class="sb-phase" id="sb-phase">--</span></div>
+<div class="sb-item">turn: <span id="sb-turn">0</span></div>
+<div class="sb-item">seq: <span id="sb-seq">--</span></div>
+<div class="sb-item">swarm: <span id="sb-swarm">0</span></div>
+<div class="sb-item" id="sb-error" style="color:var(--err);display:none"></div>
+</div>
+<script type="module">
+'use strict';
+
+const NORM = 1000;
+const MAX_LOG = 200;
+const POLL_FALLBACK_MS = 2000;
+
+const logList = document.getElementById('log-list');
+const uiLog = (message, level = 'info') => {
+    const li = document.createElement('li');
+    li.className = level;
+    const t = document.createElement('time');
+    t.textContent = new Date().toLocaleTimeString('en-GB', {hour12: false});
+    li.appendChild(t);
+    li.appendChild(document.createTextNode(message));
+    logList.prepend(li);
+    while (logList.children.length > MAX_LOG) logList.removeChild(logList.lastChild);
+};
+
+const rootEl = document.getElementById('root');
+let splitX = parseFloat(localStorage.getItem('fsx') || '62');
+let splitY = parseFloat(localStorage.getItem('fsy') || '55');
+const applyLayout = () => {
+    rootEl.style.gridTemplateColumns = `${splitX}% 4px 1fr`;
+    rootEl.style.gridTemplateRows = `${splitY}% 4px 1fr`;
+};
+applyLayout();
+
+const dragger = (handler) => (ev) => {
+    ev.preventDefault();
+    const onMove = (me) => handler(me);
+    const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+};
+document.getElementById('gutter-v').addEventListener('mousedown', dragger((ev) => {
+    splitX = Math.max(15, Math.min(85, (ev.clientX / innerWidth) * 100));
+    localStorage.setItem('fsx', splitX); applyLayout(); fitCanvas();
+}));
+document.getElementById('gutter-h').addEventListener('mousedown', dragger((ev) => {
+    splitY = Math.max(15, Math.min(85, (ev.clientY / innerHeight) * 100));
+    localStorage.setItem('fsy', splitY); applyLayout(); fitCanvas();
+}));
+document.getElementById('cross').addEventListener('mousedown', dragger((ev) => {
+    splitX = Math.max(15, Math.min(85, (ev.clientX / innerWidth) * 100));
+    splitY = Math.max(15, Math.min(85, (ev.clientY / innerHeight) * 100));
+    localStorage.setItem('fsx', splitX); localStorage.setItem('fsy', splitY); applyLayout(); fitCanvas();
+}));
+
+const cBase = document.getElementById('c-base');
+const cOverlay = document.getElementById('c-overlay');
+const canvasStack = document.getElementById('canvas-stack');
+const canvasWrap = document.getElementById('canvas-wrap');
+const ctxBase = cBase.getContext('2d');
+const ctxOvl = cOverlay.getContext('2d');
+
+let canvasW = 0;
+let canvasH = 0;
+
+const resizeCanvases = (w, h) => {
+    if (canvasW === w && canvasH === h) return;
+    canvasW = w;
+    canvasH = h;
+    cBase.width = w; cBase.height = h;
+    cOverlay.width = w; cOverlay.height = h;
+    canvasStack.style.width = `${w}px`;
+    canvasStack.style.height = `${h}px`;
+};
+
+const fitCanvas = () => {
+    if (!canvasW || !canvasH) return;
+    const wW = canvasWrap.clientWidth - 4;
+    const wH = canvasWrap.clientHeight - 4;
+    const s = Math.min(wW / canvasW, wH / canvasH, 1);
+    const dW = Math.round(canvasW * s);
+    const dH = Math.round(canvasH * s);
+    canvasStack.style.width = `${dW}px`;
+    canvasStack.style.height = `${dH}px`;
+    cBase.style.width = `${dW}px`; cBase.style.height = `${dH}px`;
+    cOverlay.style.width = `${dW}px`; cOverlay.style.height = `${dH}px`;
+};
+window.addEventListener('resize', fitCanvas);
+
+const drawPolygonOn = (ctx, ov, w, h) => {
+    const lx = (v) => (Number(v) || 0) * w / NORM;
+    const ly = (v) => (Number(v) || 0) * h / NORM;
+    const pts = (ov.points || []).map((p) => [lx(p[0]), ly(p[1])]);
+    if (!pts.length) return;
+    const op = Number(ov.opacity ?? 1);
+    if (op < 0.02) return;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, op));
+    if (ov.glow) { ctx.shadowColor = ov.stroke || '#00eeff'; ctx.shadowBlur = 12; }
+    if (pts.length > 1) {
+        ctx.beginPath();
+        ctx.moveTo(pts[0][0], pts[0][1]);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+        if (ov.closed) ctx.closePath();
+        if (ov.fill) { ctx.fillStyle = ov.fill; ctx.fill(); }
+        if (ov.stroke) {
+            ctx.strokeStyle = ov.stroke;
+            ctx.lineWidth = ov.stroke_width || 1;
+            ctx.setLineDash(ov.dash || []);
+            ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+            ctx.stroke();
+        }
+    }
+    ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
+    if (ov.label) {
+        const ls = ov.label_style || {};
+        const lp = ov.label_position || (pts.length > 0 ? pts[0] : [0, 0]);
+        const lpx = lx(lp[0]);
+        const lpy = ly(lp[1]);
+        const fs = ls.font_size || 10;
+        const pd = 4;
+        const ta = ls.align || 'left';
+        ctx.font = `bold ${fs}px system-ui,sans-serif`;
+        ctx.textBaseline = 'top';
+        ctx.textAlign = ta;
+        if (ls.bg) {
+            const tw = Math.ceil(ctx.measureText(ov.label).width) + pd * 2;
+            const th = fs + pd * 2;
+            let bx = ta === 'center' ? lpx - tw / 2 : ta === 'right' ? lpx - tw : lpx;
+            bx = Math.max(0, Math.min(w - tw, bx));
+            const by = Math.max(0, Math.min(h - th, lpy));
+            ctx.fillStyle = ls.bg;
+            ctx.globalAlpha = Math.max(0, Math.min(1, op * 0.7));
+            ctx.fillRect(bx, by, tw, th);
+            ctx.globalAlpha = Math.max(0, Math.min(1, op));
+            ctx.fillStyle = ls.color || '#ffffff';
+            ctx.fillText(ov.label, ta === 'center' ? lpx : ta === 'right' ? lpx - pd : bx + pd, by + pd);
+        } else {
+            ctx.fillStyle = ls.color || '#ffffff';
+            ctx.fillText(ov.label, lpx, lpy);
+        }
+    }
+    ctx.restore();
+};
+
+const renderOverlays = (list) => {
+    ctxOvl.clearRect(0, 0, canvasW, canvasH);
+    const sorted = list.slice().sort((a, b) => (b.age || 0) - (a.age || 0));
+    for (const ov of sorted) drawPolygonOn(ctxOvl, ov, canvasW, canvasH);
+};
+
+const loadBaseImage = (b64) => new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+        resizeCanvases(img.naturalWidth, img.naturalHeight);
+        ctxBase.drawImage(img, 0, 0);
+        fitCanvas();
+        resolve();
+    };
+    img.onerror = reject;
+    img.src = `data:image/png;base64,${b64}`;
+});
+
+const showLiveImage = (b64) => {
+    const img = new Image();
+    img.onload = () => {
+        resizeCanvases(img.naturalWidth, img.naturalHeight);
+        ctxBase.drawImage(img, 0, 0);
+        ctxOvl.clearRect(0, 0, canvasW, canvasH);
+        fitCanvas();
+    };
+    img.src = `data:image/png;base64,${b64}`;
+};
+
+const renderToBlob = async (b64, overlayList) => {
+    const img = await new Promise((resolve, reject) => {
+        const i = new Image();
+        i.onload = () => resolve(i);
+        i.onerror = reject;
+        i.src = `data:image/png;base64,${b64}`;
+    });
+    const w = img.naturalWidth;
+    const h = img.naturalHeight;
+    const oc = new OffscreenCanvas(w, h);
+    const octx = oc.getContext('2d');
+    octx.drawImage(img, 0, 0);
+    for (const ov of overlayList) drawPolygonOn(octx, ov, w, h);
+    const blob = await oc.convertToBlob({type: 'image/png'});
+    const reader = new FileReader();
+    return new Promise((resolve) => {
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.readAsDataURL(blob);
+    });
+};
+
+const exportAnnotated = async () => {
+    const oc = new OffscreenCanvas(canvasW, canvasH);
+    const octx = oc.getContext('2d');
+    octx.drawImage(cBase, 0, 0);
+    octx.drawImage(cOverlay, 0, 0);
+    const blob = await oc.convertToBlob({type: 'image/png'});
+    const reader = new FileReader();
+    return new Promise((resolve) => {
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.readAsDataURL(blob);
+    });
+};
+
+const swarmBody = document.getElementById('swarm-body');
+let swarmCount = 0;
+let autoScroll = true;
+let lastSeenTurn = 0;
+let emptyCleared = false;
+let allExpanded = true;
+let imgScalePct = 40;
+
+const imgScaleBar = document.getElementById('img-scale-bar');
+const imgScaleVal = document.getElementById('img-scale-val');
+
+const applyImgScale = () => {
+    const imgs = swarmBody.querySelectorAll('.swarm-image-full');
+    imgs.forEach(img => { img.style.maxWidth = imgScalePct + '%'; });
+    imgScaleVal.textContent = imgScalePct + '%';
+};
+
+imgScaleBar.addEventListener('input', () => {
+    imgScalePct = parseInt(imgScaleBar.value, 10);
+    applyImgScale();
+});
+
+const fmtTime = (ts) => {
+    if (!ts) return '';
+    const d = new Date(ts * 1000);
+    return d.toLocaleTimeString('en-GB', {hour12: false}) + '.' + String(d.getMilliseconds()).padStart(3, '0');
+};
+
+const insertTurnSeparator = (turn) => {
+    const sep = document.createElement('div');
+    sep.className = 'swarm-turn-sep';
+    sep.textContent = '-- Turn ' + turn + ' --';
+    swarmBody.appendChild(sep);
+};
+
+const doAutoScroll = () => {
+    if (autoScroll) {
+        requestAnimationFrame(() => {
+            swarmBody.scrollTop = swarmBody.scrollHeight;
+        });
+    }
+};
+
+const renderSwarmCard = (msg, globalIdx) => {
+    const card = document.createElement('div');
+    card.className = 'swarm-card';
+    card.dataset.idx = String(globalIdx);
+
+    const hdr = document.createElement('div');
+    hdr.className = 'swarm-card-header';
+
+    const agentSpan = document.createElement('span');
+    agentSpan.className = 'swarm-agent ' + msg.agent;
+    agentSpan.textContent = msg.agent;
+    hdr.appendChild(agentSpan);
+
+    const dirSpan = document.createElement('span');
+    dirSpan.className = 'swarm-dir ' + msg.direction;
+    const arrow = msg.direction === 'input' ? '-> VLM' : msg.direction === 'output' ? '<- VLM' : '!! ERR';
+    dirSpan.textContent = arrow;
+    hdr.appendChild(dirSpan);
+
+    if (msg.has_image) {
+        const imgBadge = document.createElement('span');
+        imgBadge.style.cssText = 'font-size:9px;padding:1px 4px;background:#1a2a40;color:#6ab0ff;border-radius:3px';
+        imgBadge.textContent = 'IMG';
+        hdr.appendChild(imgBadge);
+    }
+
+    const tsSpan = document.createElement('span');
+    tsSpan.className = 'swarm-ts';
+    tsSpan.textContent = fmtTime(msg.ts);
+    hdr.appendChild(tsSpan);
+
+    card.appendChild(hdr);
+
+    const fullText = document.createElement('div');
+    fullText.className = 'swarm-full-text';
+    fullText.textContent = msg.text || '(empty)';
+    card.appendChild(fullText);
+
+    if (msg.has_image) {
+        const imgWrap = document.createElement('div');
+        imgWrap.style.cssText = 'margin-top:6px';
+        const imgEl = document.createElement('img');
+        imgEl.className = 'swarm-image-full';
+        imgEl.style.maxWidth = imgScalePct + '%';
+        imgEl.src = '/swarm_image/' + globalIdx;
+        imgEl.addEventListener('load', doAutoScroll);
+        imgWrap.appendChild(imgEl);
+        card.appendChild(imgWrap);
+    }
+
+    if (msg.system) {
+        const sysLabel = document.createElement('div');
+        sysLabel.style.cssText = 'font-size:9px;color:#4a4a60;text-transform:uppercase;letter-spacing:.06em;margin-top:6px;font-weight:600';
+        sysLabel.textContent = 'System prompt:';
+        card.appendChild(sysLabel);
+        const sysDiv = document.createElement('div');
+        sysDiv.className = 'swarm-system';
+        sysDiv.textContent = msg.system;
+        card.appendChild(sysDiv);
+    }
+
+    return card;
+};
+
+const appendSwarmMessage = (msg) => {
+    if (!emptyCleared) {
+        const emptyEl = swarmBody.querySelector('.swarm-empty');
+        if (emptyEl) emptyEl.remove();
+        emptyCleared = true;
+    }
+    const msgTurn = msg.turn || 0;
+    if (msgTurn > lastSeenTurn) {
+        lastSeenTurn = msgTurn;
+        insertTurnSeparator(msgTurn);
+    }
+    const globalIdx = msg.idx !== undefined ? msg.idx : swarmCount;
+    const card = renderSwarmCard(msg, globalIdx);
+    swarmBody.appendChild(card);
+    swarmCount++;
+    document.getElementById('badge-swarm').textContent = swarmCount + ' msgs';
+    document.getElementById('sb-swarm').textContent = swarmCount;
+    doAutoScroll();
+};
+
+document.getElementById('btn-toggle-all').addEventListener('click', () => {
+    allExpanded = !allExpanded;
+    const systems = swarmBody.querySelectorAll('.swarm-system');
+    const images = swarmBody.querySelectorAll('.swarm-image-full');
+    const fullTexts = swarmBody.querySelectorAll('.swarm-full-text');
+    const sysLabels = swarmBody.querySelectorAll('.swarm-card > div[style*="uppercase"]');
+    systems.forEach(el => { el.style.display = allExpanded ? '' : 'none'; });
+    sysLabels.forEach(el => { el.style.display = allExpanded ? '' : 'none'; });
+    images.forEach(el => { el.parentElement.style.display = allExpanded ? '' : 'none'; });
+    fullTexts.forEach(el => {
+        if (allExpanded) {
+            el.style.maxHeight = '400px';
+            el.style.overflow = 'auto';
+        } else {
+            el.style.maxHeight = '40px';
+            el.style.overflow = 'hidden';
+        }
+    });
+    document.getElementById('btn-toggle-all').textContent = allExpanded ? 'MIN' : 'ALL';
+});
+
+document.getElementById('btn-save-log').addEventListener('click', async () => {
+    document.getElementById('btn-save-log').textContent = 'SAVING...';
+    try {
+        const imgEls = swarmBody.querySelectorAll('.swarm-image-full');
+        for (const img of imgEls) {
+            if (img.src && img.src.startsWith('http') && img.complete && img.naturalWidth > 0) {
+                try {
+                    const c = document.createElement('canvas');
+                    c.width = img.naturalWidth; c.height = img.naturalHeight;
+                    c.getContext('2d').drawImage(img, 0, 0);
+                    img.setAttribute('src', c.toDataURL('image/png'));
+                } catch(e) {}
+            }
+        }
+
+        let canvasDataUri = '';
+        if (canvasW > 0 && canvasH > 0) {
+            const oc = new OffscreenCanvas(canvasW, canvasH);
+            const octx = oc.getContext('2d');
+            octx.drawImage(cBase, 0, 0);
+            octx.drawImage(cOverlay, 0, 0);
+            const blob = await oc.convertToBlob({type: 'image/png'});
+            const reader = new FileReader();
+            canvasDataUri = await new Promise(r => { reader.onload = () => r(reader.result); reader.readAsDataURL(blob); });
+        }
+
+        const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0,19);
+        const logItems = Array.from(logList.querySelectorAll('li')).map(li => '<li class="' + li.className + '">' + li.innerHTML + '</li>').join('\n');
+
+        // Clone swarm body and force all images to full size for saving
+        const clonedSwarm = swarmBody.cloneNode(true);
+        clonedSwarm.querySelectorAll('.swarm-image-full').forEach(img => {
+            img.style.maxWidth = '100%';
+        });
+        clonedSwarm.querySelectorAll('.swarm-full-text').forEach(el => {
+            el.style.maxHeight = 'none';
+            el.style.overflow = 'visible';
+        });
+        clonedSwarm.querySelectorAll('.swarm-system').forEach(el => {
+            el.style.display = '';
+        });
+
+        const html = '<!DOCTYPE html>\n<html><head><meta charset="UTF-8"><title>Franz Log ' + ts + '</title>\n<style>\nbody{background:#0d0d0f;color:#e8e8f0;font-family:system-ui,sans-serif;font-size:13px;padding:20px;max-width:1400px;margin:0 auto}\nh1{color:#4a9eff;font-size:16px;margin-bottom:10px}\nh2{color:#a0a0b8;font-size:13px;margin:20px 0 8px;text-transform:uppercase;letter-spacing:.06em}\n.swarm-card{padding:8px 10px;border-bottom:1px solid #2a2a35;margin-bottom:2px}\n.swarm-card-header{display:flex;gap:6px;font-size:11px;margin-bottom:4px;align-items:center}\n.swarm-agent{font-weight:700;padding:1px 6px;border-radius:3px;font-size:11px;text-transform:uppercase}\n.VISIONARY{background:#1a2a40;color:#6ab0ff}.CONDUCTOR{background:#1a3030;color:#5ef0c0}\n.ORCHESTRATOR{background:#2a2a30;color:#a0a0b8}.EXECUTOR{background:#1a3020;color:#5edf8e}\n.PLANNER{background:#1a2a3a;color:#88bbff}\n.swarm-dir{font-size:10px;font-family:monospace}.swarm-dir.input{color:#6ab0ff}.swarm-dir.output{color:#5edf8e}.swarm-dir.error{color:#ff4455}\n.swarm-ts{font-size:9px;color:#3a3a50;margin-left:auto;font-family:monospace}\n.swarm-full-text{font-family:monospace;font-size:11px;white-space:pre-wrap;word-break:break-word;color:#e8e8f0;line-height:1.5}\n.swarm-system{font-family:monospace;font-size:10px;color:#4a4a60;white-space:pre-wrap;word-break:break-word;margin-top:6px;padding:6px 8px;background:#0a0a10;border-radius:4px;border:1px solid #1a1a25}\nimg.swarm-image-full{max-width:100%;border:1px solid #2a2a35;border-radius:4px;margin-top:4px}\n.canvas-img{max-width:100%;border:1px solid #2a2a35;border-radius:4px}\n.swarm-turn-sep{padding:4px 10px;font-size:10px;font-weight:700;color:#4a9eff;background:#0e1420;border:1px solid #2a2a35;margin:8px 0 4px}\nul{list-style:none;padding:0}li{padding:1px 0;border-bottom:1px solid #1a1a20;font-family:monospace;font-size:11px}\nli.info{color:#6b6b80}li.ok{color:#3ecf8e}li.warn{color:#f0a000}li.error{color:#ff4455}\nli time{color:#3a3a50;margin-right:6px}\n</style></head><body>\n<h1>Franz Panel Log -- ' + ts + '</h1>\n' + (canvasDataUri ? '<h2>Last Annotated Frame</h2><img class="canvas-img" src="' + canvasDataUri + '">' : '') + '\n<h2>Swarm Wire (' + swarmCount + ' messages)</h2>\n' + clonedSwarm.innerHTML + '\n<h2>Event Log</h2>\n<ul>' + logItems + '</ul>\n</body></html>';
+
+        const blob = new Blob([html], {type: 'text/html'});
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'franz-log-' + ts + '.html';
+        a.click();
+        URL.revokeObjectURL(a.href);
+        uiLog('Panel logs saved', 'ok');
+    } catch(e) {
+        uiLog('Save failed: ' + e, 'error');
+    } finally {
+        document.getElementById('btn-save-log').textContent = 'SAVE';
+    }
+});
+
+const updateStatusBar = (st) => {
+    document.getElementById('sb-phase').textContent = st.phase || '--';
+    document.getElementById('sb-turn').textContent = st.turn || 0;
+    document.getElementById('sb-seq').textContent = st.pending_seq || '--';
+    const errEl = document.getElementById('sb-error');
+    if (st.error) { errEl.style.display = ''; errEl.textContent = 'err: ' + st.error; }
+    else { errEl.style.display = 'none'; }
+    const bp = document.getElementById('badge-phase');
+    bp.textContent = st.phase || '--';
+    bp.className = st.phase === 'error' ? 'badge err' : st.phase === 'calling_vlm' ? 'badge ok' : 'badge warn';
+    document.getElementById('badge-turn').textContent = 'turn ' + (st.turn || 0);
+    document.getElementById('canvas-status').textContent = canvasW ? canvasW + 'x' + canvasH : 'no frame';
+};
+
+let lastPendingSeq = -1;
+let isBusy = false;
+let lastBrainAnnSeq = -1;
+let brainAnnBusy = false;
+
+const postAnnotated = async (seqNum, b64) => {
+    try {
+        const resp = await fetch('/annotated', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({seq: seqNum, image_b64: b64})
+        });
+        const result = await resp.json();
+        uiLog('/annotated seq=' + seqNum + ' ok=' + result.ok, result.ok ? 'ok' : 'error');
+        return result.ok;
+    } catch (err) {
+        uiLog('/annotated fail: ' + err, 'error');
+        return false;
+    }
+};
+
+const fetchFrame = async () => {
+    try {
+        const resp = await fetch('/frame');
+        return resp.ok ? await resp.json() : null;
+    } catch {
+        return null;
+    }
+};
+
+const handleFrame = async (seqNum) => {
+    if (isBusy) return;
+    if (seqNum <= lastPendingSeq) return;
+    isBusy = true;
+    lastPendingSeq = seqNum;
+    try {
+        const frameData = await fetchFrame();
+        if (!frameData || !frameData.raw_b64 || frameData.raw_b64.length < 100) {
+            uiLog('frame fetch fail', 'error');
+            return;
+        }
+        document.getElementById('badge-img').textContent = 'seq ' + seqNum;
+        document.getElementById('badge-img').className = 'badge warn';
+        await loadBaseImage(frameData.raw_b64);
+        renderOverlays(frameData.overlays || []);
+        const annB64 = await exportAnnotated();
+        uiLog('exported ann len=' + annB64.length, 'ok');
+        const success = await postAnnotated(seqNum, annB64);
+        document.getElementById('badge-img').textContent = success ? 'seq ' + seqNum + ' ok' : 'seq ' + seqNum + ' fail';
+        document.getElementById('badge-img').className = success ? 'badge ok' : 'badge err';
+    } catch (err) {
+        uiLog('frame err: ' + err, 'error');
+    } finally {
+        isBusy = false;
+    }
+};
+
+const handleBrainAnnotation = async (seqNum) => {
+    if (brainAnnBusy) return;
+    if (seqNum <= lastBrainAnnSeq) return;
+    brainAnnBusy = true;
+    lastBrainAnnSeq = seqNum;
+    try {
+        const resp = await fetch('/brain_frame');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (!data.raw_b64 || data.raw_b64.length < 100) return;
+        uiLog('brain ann seq=' + seqNum + ' rendering', 'info');
+        const annB64 = await renderToBlob(data.raw_b64, data.overlays || []);
+        showLiveImage(annB64);
+        document.getElementById('badge-img').textContent = 'ann ' + seqNum;
+        document.getElementById('badge-img').className = 'badge warn';
+        const postResp = await fetch('/brain_annotated', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({seq: seqNum, image_b64: annB64})
+        });
+        const result = await postResp.json();
+        uiLog('brain ann seq=' + seqNum + ' ok=' + result.ok, result.ok ? 'ok' : 'error');
+    } catch (err) {
+        uiLog('brain ann err: ' + err, 'error');
+    } finally {
+        brainAnnBusy = false;
+    }
+};
+
+const sseBadge = document.getElementById('badge-sse');
+const sseDot = sseBadge.querySelector('.sse-dot');
+let sseConnected = false;
+let fallbackTimer = null;
+
+const startSSE = () => {
+    const es = new EventSource('/events');
+
+    es.addEventListener('connected', () => {
+        sseConnected = true;
+        sseDot.className = 'sse-dot live';
+        uiLog('SSE connected', 'ok');
+        if (fallbackTimer) { clearInterval(fallbackTimer); fallbackTimer = null; }
+    });
+
+    es.addEventListener('state', (e) => {
+        const st = JSON.parse(e.data);
+        updateStatusBar(st);
+    });
+
+    es.addEventListener('swarm', (e) => {
+        const msg = JSON.parse(e.data);
+        appendSwarmMessage(msg);
+    });
+
+    es.addEventListener('frame_ready', (e) => {
+        const data = JSON.parse(e.data);
+        handleFrame(data.seq);
+    });
+
+    es.addEventListener('brain_ann_ready', (e) => {
+        const data = JSON.parse(e.data);
+        handleBrainAnnotation(data.seq);
+    });
+
+    es.addEventListener('annotation_done', (e) => {
+        uiLog('annotation confirmed seq=' + JSON.parse(e.data).seq, 'info');
+    });
+
+    es.addEventListener('brain_ann_done', (e) => {
+        uiLog('brain ann confirmed seq=' + JSON.parse(e.data).seq, 'info');
+    });
+
+    es.onerror = () => {
+        if (sseConnected) {
+            sseConnected = false;
+            sseDot.className = 'sse-dot dead';
+            uiLog('SSE disconnected, falling back to polling', 'warn');
+            startFallbackPolling();
+        }
+    };
+};
+
+const fallbackPoll = async () => {
+    try {
+        const resp = await fetch('/state');
+        if (!resp.ok) return;
+        const state = await resp.json();
+        updateStatusBar(state);
+        if (state.phase === 'annotating' && state.pending_seq > 0) {
+            await handleFrame(state.pending_seq);
+        }
+        if (state.brain_ann_seq > 0 && state.brain_ann_seq > lastBrainAnnSeq) {
+            await handleBrainAnnotation(state.brain_ann_seq);
+        }
+        if ((state.swarm_count || 0) > swarmCount) {
+            const swResp = await fetch('/swarm?after=' + swarmCount);
+            if (swResp.ok) {
+                const swData = await swResp.json();
+                if (swData.messages) {
+                    for (const msg of swData.messages) {
+                        appendSwarmMessage(msg);
+                    }
+                }
+            }
+        }
+    } catch {}
+};
+
+const startFallbackPolling = () => {
+    if (fallbackTimer) return;
+    fallbackTimer = setInterval(fallbackPoll, POLL_FALLBACK_MS);
+};
+
+swarmBody.addEventListener('scroll', () => {
+    const atBottom = swarmBody.scrollHeight - swarmBody.scrollTop - swarmBody.clientHeight < 60;
+    autoScroll = atBottom;
+});
+
+uiLog('Franz panel starting');
+startFallbackPolling();
+startSSE();
+</script>
+</body>
+</html>
