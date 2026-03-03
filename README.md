@@ -1,6 +1,3 @@
-
-
-```markdown
 # Franz-AI — Swarm-Driven GUI Automation Framework
 
 > **Python orchestrates I/O. LLM agents orchestrate intelligence.**
@@ -574,17 +571,8 @@ INVESTIGATION METHODS:
 - Watch for: context overflow, repeating inputs, hallucinated observations, empty responses
 ```
 
----
-
-## License
-
-MIT
-
----
-
 ## Contributing
 
 Brain contributions are welcome. The plumbing files (`franz.py`, `router.py`,
 `win32.py`, `panel.html`) should not be modified — all innovation happens in
 brain files and their agent prompts.
-```
