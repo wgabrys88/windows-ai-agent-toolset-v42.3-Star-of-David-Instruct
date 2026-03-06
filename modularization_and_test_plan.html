@@ -1,0 +1,1163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Franz-AI Modularization &amp; Test Plan</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>tailwind.config={theme:{extend:{colors:{brand:{50:'#f0f9ff',900:'#0c1a2e'}}}}}</script>
+<style>
+  body{background:#0c1a2e;color:#e2e8f0;font-family:'Inter',system-ui,sans-serif}
+  .card{background:#112240;border:1px solid #1e3a5f;border-radius:12px;padding:1.5rem;margin-bottom:1.5rem}
+  .badge{display:inline-block;padding:2px 10px;border-radius:9999px;font-size:.75rem;font-weight:600}
+  .badge-red{background:#7f1d1d;color:#fca5a5}
+  .badge-yellow{background:#78350f;color:#fcd34d}
+  .badge-green{background:#14532d;color:#86efac}
+  .badge-blue{background:#1e3a8a;color:#93c5fd}
+  .badge-purple{background:#4c1d95;color:#c4b5fd}
+  .section-title{font-size:1.5rem;font-weight:700;color:#60a5fa;border-bottom:2px solid #1e3a5f;padding-bottom:.5rem;margin-bottom:1rem}
+  .sub-title{font-size:1.1rem;font-weight:600;color:#93c5fd;margin:1rem 0 .5rem}
+  pre code{font-size:.8rem!important}
+  table{width:100%;border-collapse:collapse}
+  th{background:#1e3a5f;color:#93c5fd;padding:.6rem .8rem;text-align:left;font-size:.85rem}
+  td{padding:.55rem .8rem;border-bottom:1px solid #1e3a5f;font-size:.85rem;vertical-align:top}
+  tr:hover td{background:#0f2035}
+  .mermaid{background:#0a1628;border-radius:8px;padding:1rem;overflow-x:auto}
+  .finding{border-left:4px solid;padding:.75rem 1rem;margin:.75rem 0;border-radius:0 8px 8px 0;background:#0a1628}
+  .finding-critical{border-color:#ef4444}
+  .finding-high{border-color:#f97316}
+  .finding-medium{border-color:#eab308}
+  .finding-low{border-color:#3b82f6}
+  .file-ref{font-family:monospace;background:#1e3a5f;padding:1px 6px;border-radius:4px;font-size:.8rem;color:#7dd3fc}
+  .quote{font-family:monospace;background:#0a1628;border:1px solid #1e3a5f;padding:.5rem .75rem;border-radius:6px;font-size:.78rem;color:#a5f3fc;margin:.4rem 0;white-space:pre-wrap;word-break:break-all}
+  nav a{color:#60a5fa;text-decoration:none;font-size:.85rem;padding:.25rem .5rem;border-radius:4px}
+  nav a:hover{background:#1e3a5f}
+  .step{display:flex;gap:1rem;margin:.75rem 0}
+  .step-num{min-width:2rem;height:2rem;background:#1e3a8a;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:.85rem;color:#93c5fd;flex-shrink:0}
+</style>
+</head>
+<body class="p-4 md:p-8 max-w-7xl mx-auto">
+
+<div class="mb-8">
+  <h1 class="text-3xl font-bold text-blue-300 mb-1">Franz-AI · Star-of-David</h1>
+  <p class="text-slate-400 text-sm">Modularization &amp; Test Plan — Full System Audit</p>
+</div>
+
+<nav class="card flex flex-wrap gap-2 mb-6">
+  <a href="#exec">Executive Summary</a>
+  <a href="#arch">Architecture Analysis</a>
+  <a href="#audit">Audit Findings</a>
+  <a href="#newarch">Proposed Architecture</a>
+  <a href="#perfile">Per-File Plan</a>
+  <a href="#tests">Test Plan</a>
+  <a href="#roadmap">Roadmap</a>
+  <a href="#quickwins">Quick Wins</a>
+</nav>
+
+<!-- ═══════════════════════════════════════════════════════════════ 1. EXEC -->
+<section id="exec">
+<div class="card">
+<div class="section-title">1 · Executive Summary</div>
+
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+  <div class="bg-[#0a1628] rounded-lg p-4 border border-blue-900">
+    <div class="text-green-400 font-bold text-lg mb-1">Feasibility</div>
+    <div class="text-sm text-slate-300">High. The codebase is small (~1 200 lines across 4 Python files). Full modularization is achievable in 2–3 focused sessions with zero external dependencies beyond stdlib + ctypes.</div>
+  </div>
+  <div class="bg-[#0a1628] rounded-lg p-4 border border-blue-900">
+    <div class="text-yellow-400 font-bold text-lg mb-1">Biggest Wins</div>
+    <ul class="text-sm text-slate-300 list-disc list-inside space-y-1">
+      <li>Extract coordinate math → pure, testable module</li>
+      <li>Replace global <code>_STATE</code> god-object with typed dataclass</li>
+      <li>Decouple VLM calls from HTTP handler</li>
+      <li>Make brain a pure function (no global <code>_completed_labels</code>)</li>
+    </ul>
+  </div>
+  <div class="bg-[#0a1628] rounded-lg p-4 border border-blue-900">
+    <div class="text-red-400 font-bold text-lg mb-1">Biggest Risks</div>
+    <ul class="text-sm text-slate-300 list-disc list-inside space-y-1">
+      <li>win32.py calls ctypes at import time — breaks on non-Windows</li>
+      <li>Race conditions in <code>_STATE</code> lock + SSE subscriber list</li>
+      <li>Brain global state causes incorrect benchmark replay</li>
+      <li>CONDUCTOR output parsing is fragile (turns.txt proves it)</li>
+    </ul>
+  </div>
+</div>
+
+<div class="sub-title">Root Cause of the turns.txt Failures</div>
+<p class="text-sm text-slate-300 mb-2">Two distinct bugs are visible in the benchmark log:</p>
+<div class="finding finding-critical">
+  <span class="badge badge-red">CRITICAL</span> <strong>Invalid drag(1000,629…)</strong>
+  <p class="text-sm mt-1 text-slate-300">Turn 1: VISIONARY described the cursor label overlay text <code>"[1000,629]"</code> as if it were canvas content. CONDUCTOR hallucinated a drag using those pixel-label numbers verbatim. <code>_parse_drags</code> accepted <code>drag(1000,629, 1000,629)</code> because <code>1000 ≤ 1000</code> passes the bounds check. The drag was a zero-length no-op at a wrong position.</p>
+  <div class="quote">turns.txt Turn 1 CONDUCTOR output:
+drag(1000,629, 1000,629)</div>
+</div>
+<div class="finding finding-critical">
+  <span class="badge badge-red">CRITICAL</span> <strong>Premature DONE state</strong>
+  <p class="text-sm mt-1 text-slate-300">Turn 2: CONDUCTOR output contained 8 drag lines <em>followed immediately by</em> the word <code>DONE</code> on the same response. <code>_is_done</code> only checks the full stripped string, so it returned <code>False</code> and the drags were executed. But the verify-call (≥3 drags path) then received a fresh image and returned <code>DONE</code>, which forced <code>_completed_labels = all strokes</code> regardless of what was actually drawn. The loop then short-circuits on every subsequent turn.</p>
+  <div class="quote">turns.txt Turn 2 CONDUCTOR output (truncated):
+drag(500,900, 850,300)
+...
+drag(850,700, 500,100)
+DONE          ← mixed in same response; verify call also returns DONE</div>
+</div>
+</div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ 2. ARCH -->
+<section id="arch">
+<div class="card">
+<div class="section-title">2 · Current Architecture Analysis</div>
+
+<div class="sub-title">Component Roles</div>
+<table class="mb-4">
+<thead><tr><th>File</th><th>Role</th><th>Lines</th><th>Concerns</th></tr></thead>
+<tbody>
+<tr><td><span class="file-ref">franz.py</span></td><td>Entry point + queue bus + module loader + HTTP server launcher</td><td>~230</td><td>God module: owns queues, runtime state, config helpers, brain loader, server start</td></tr>
+<tr><td><span class="file-ref">router.py</span></td><td>HTTP handler + engine loop + session log + SSE bus + annotation bridge</td><td>~520</td><td>God class: mixes HTTP, threading, VLM calls, file I/O, state machine</td></tr>
+<tr><td><span class="file-ref">brain_bench.py</span></td><td>Benchmark brain: swarm orchestration, drag parsing, overlay queuing</td><td>~310</td><td>Global mutable state; calls subprocess directly; duplicates VLM call logic</td></tr>
+<tr><td><span class="file-ref">win32.py</span></td><td>Screen capture, mouse/keyboard input, region selector</td><td>~580</td><td>ctypes at import time; no interface abstraction; untestable on non-Windows</td></tr>
+<tr><td><span class="file-ref">panel.html</span></td><td>Browser UI: canvas annotation, SSE consumer, overlay renderer</td><td>—</td><td>Intentional UI bridge — keep as-is</td></tr>
+</tbody>
+</table>
+
+<div class="sub-title">Data Flow Diagram</div>
+<div class="mermaid">
+flowchart TD
+    subgraph Browser["Browser (panel.html)"]
+        UI["Canvas + Overlay Renderer"]
+        SSE["SSE /events listener"]
+        ANN["POST /annotated"]
+        BANN["POST /brain_annotated"]
+    end
+
+    subgraph Server["router.py (HTTP + Engine)"]
+        EL["engine_loop()"]
+        FH["FranzHandler"]
+        STATE["_STATE god-object\n(lock, phase, seqs, b64s)"]
+        EBUS["_EventBus (SSE pub/sub)"]
+        SLOG["SessionLog (turns.txt + PNGs)"]
+    end
+
+    subgraph Franz["franz.py (Bus + Loader)"]
+        AQ["action_queue"]
+        OQ["overlay_queue"]
+        SQ["swarm_queue"]
+        BAR["_brain_annotate_request"]
+        BARES["_brain_annotate_result"]
+    end
+
+    subgraph Brain["brain_bench.py"]
+        OVR["on_vlm_response()"]
+        SWARM["_run_swarm()"]
+        GLOB["_completed_labels (global)"]
+        SUBP1["subprocess win32 drag"]
+        SUBP2["subprocess win32 capture"]
+    end
+
+    subgraph Win32["win32.py (subprocess)"]
+        CAP["capture"]
+        DRAG["drag"]
+        CPOS["cursor_pos"]
+        SEL["select_region"]
+    end
+
+    EL -->|"call_vlm(annotated_b64)"| VLM["VLM HTTP endpoint"]
+    VLM -->|"vlm_response text"| EL
+    EL -->|"on_vlm_response(text)"| OVR
+    OVR --> SWARM
+    SWARM --> GLOB
+    SWARM -->|"franz.overlays()"| OQ
+    SWARM -->|"subprocess"| SUBP1
+    SWARM -->|"subprocess"| SUBP2
+    SUBP1 --> DRAG
+    SUBP2 --> CAP
+
+    EL -->|"drain action_queue"| AQ
+    EL -->|"drain overlay_queue"| OQ
+    EL -->|"subprocess win32"| Win32
+    EL -->|"_wait_for_annotation"| STATE
+    STATE -->|"frame_ready event"| EBUS
+    EBUS -->|"SSE stream"| SSE
+    SSE -->|"GET /frame"| FH
+    FH -->|"raw_b64 + overlays"| UI
+    UI -->|"annotated PNG"| ANN
+    ANN -->|"POST /annotated"| FH
+    FH -->|"annotated_ready.set()"| STATE
+    STATE -->|"unblocks engine_loop"| EL
+    SLOG -->|"write turns.txt"| FS["Filesystem"]
+    SLOG -->|"save PNG"| FS
+</div>
+
+<div class="sub-title">Dependency Graph (import-level)</div>
+<div class="mermaid">
+graph LR
+    franz -->|imports| router
+    franz -->|loads via importlib| brain_bench
+    router -->|imports| franz
+    brain_bench -->|imports| franz
+    brain_bench -->|subprocess| win32
+    router -->|subprocess| win32
+    win32 -->|ctypes at module load| OS["Windows ctypes DLLs"]
+</div>
+
+<p class="text-sm text-slate-400 mt-2">⚠ Circular dependency: <span class="file-ref">franz.py</span> loads <span class="file-ref">router.py</span> which imports <span class="file-ref">franz</span>. This works only because <code>sys.modules['franz'] = sys.modules[__name__]</code> is set before the load, but it makes isolated testing impossible.</p>
+</div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ 3. AUDIT -->
+<section id="audit">
+<div class="card">
+<div class="section-title">3 · Detailed Audit Findings</div>
+
+<!-- 3A Dead Code -->
+<div class="sub-title">3A · Dead / Unreachable Code</div>
+
+<div class="finding finding-low">
+  <span class="badge badge-blue">DEAD CODE</span> <span class="file-ref">franz.py:68–100</span> — Action builder helpers never used by brain_bench
+  <p class="text-sm mt-1 text-slate-300"><code>click()</code>, <code>double_click()</code>, <code>right_click()</code>, <code>type_text()</code>, <code>press_key()</code>, <code>hotkey()</code>, <code>scroll_up()</code>, <code>scroll_down()</code>, <code>drag_start()</code>, <code>drag_end()</code> — all return dicts that must be put into <code>action_queue</code> manually. <code>brain_bench.py</code> never calls any of them; it calls <code>subprocess win32 drag</code> directly. These helpers exist for other brains but are untested and undocumented.</p>
+</div>
+
+<div class="finding finding-low">
+  <span class="badge badge-blue">DEAD CODE</span> <span class="file-ref">franz.py:103–120</span> — <code>dot()</code>, <code>box()</code>, <code>line()</code> overlay helpers
+  <p class="text-sm mt-1 text-slate-300">Never called anywhere in the current codebase. Overlay dicts are constructed inline in <code>brain_bench.py:_queue_target_overlays()</code>.</p>
+</div>
+
+<div class="finding finding-low">
+  <span class="badge badge-blue">DEAD CODE</span> <span class="file-ref">router.py:_emit_swarm()</span>
+  <p class="text-sm mt-1 text-slate-300">Thin wrapper around <code>franz.swarm_message()</code> with identical signature. Called in exactly one place (<code>call_vlm</code>). Zero abstraction value; adds indirection.</p>
+</div>
+
+<div class="finding finding-low">
+  <span class="badge badge-blue">DEAD CODE</span> <span class="file-ref">brain_bench.py:CAPTURE_REGION / CAPTURE_WIDTH / CAPTURE_HEIGHT / CAPTURE_DELAY_SECONDS / ACTION_DELAY_SECONDS / SHOW_CURSOR / DEFAULT_CURSOR_POS</span>
+  <p class="text-sm mt-1 text-slate-300">These config constants are defined in the brain but the engine loop in <code>router.py</code> reads them via <code>franz.cfg(brain, ...)</code>. The brain itself never reads them directly — they exist purely as config carriers for the engine. This is an implicit contract with no interface definition.</p>
+</div>
+
+<div class="finding finding-low">
+  <span class="badge badge-blue">DEAD CODE</span> <span class="file-ref">router.py:_STATE.brain_ann_live_b64</span>
+  <p class="text-sm mt-1 text-slate-300">Set in <code>do_POST /brain_annotated</code> and exposed truncated in <code>/state</code> response, but never consumed by <code>panel.html</code> in any meaningful way (only first 20 chars sent). The full brain annotation flow (<code>/brain_frame</code>, <code>/brain_annotated</code>) is implemented but <code>brain_bench.py</code> never calls <code>franz.request_annotation()</code>.</p>
+</div>
+
+<div class="finding finding-low">
+  <span class="badge badge-blue">DEAD CODE</span> <span class="file-ref">brain_bench.py:CURSOR_COLOR / CURSOR_ARM / CURSOR_FONT_SIZE / CURSOR_LABEL_BG / CURSOR_SHOW_LABEL / CURSOR_LABEL_OFFSET / CURSOR_LABEL_LIMIT</span>
+  <p class="text-sm mt-1 text-slate-300">Cursor appearance constants read by <code>router.py:_make_cursor_overlay()</code> via <code>franz.cfg()</code>. The brain never uses them itself. Same implicit-contract anti-pattern as above.</p>
+</div>
+
+<!-- 3B Duplication -->
+<div class="sub-title">3B · Duplicated Logic</div>
+
+<div class="finding finding-high">
+  <span class="badge badge-yellow">DUPLICATION</span> VLM HTTP call logic duplicated in two places
+  <p class="text-sm mt-1 text-slate-300"><span class="file-ref">router.py:call_vlm()</span> and <span class="file-ref">brain_bench.py:_call_agent()</span> both construct identical JSON bodies, call <code>urllib.request.urlopen</code>, parse <code>choices[0].message.content</code>, and emit swarm messages. The only differences are: agent name ("VISIONARY" vs parameterized), and whether an image is always included. ~60 lines of near-identical code.</p>
+  <div class="quote">router.py call_vlm() vs brain_bench.py _call_agent():
+Both: json.dumps({model, temperature, top_p, max_tokens, stream:False, messages:[sys,user]})
+Both: urllib.request.Request(endpoint, data=body, headers=..., method="POST")
+Both: resp_obj.get("choices",[])[0].get("message",{}).get("content","")
+Both: franz.swarm_message(agent, "input"/"output"/"error", ...)</div>
+</div>
+
+<div class="finding finding-high">
+  <span class="badge badge-yellow">DUPLICATION</span> Subprocess capture called from 3 different sites
+  <p class="text-sm mt-1 text-slate-300"><span class="file-ref">router.py:_subprocess_capture()</span>, <span class="file-ref">brain_bench.py:_capture_fresh_b64()</span>, and <span class="file-ref">brain_bench.py:_latest_screenshot_b64()</span> all deal with getting a screenshot. The first two spawn <code>win32.py capture</code> subprocesses with slightly different argument assembly. The third reads from disk. Three different strategies for the same logical operation.</p>
+</div>
+
+<div class="finding finding-medium">
+  <span class="badge badge-yellow">DUPLICATION</span> Coordinate normalization / region parsing duplicated
+  <p class="text-sm mt-1 text-slate-300"><span class="file-ref">win32.py:_parse_region()</span>, <span class="file-ref">win32.py:_parse_pos()</span>, <span class="file-ref">win32.py:_norm_region_to_pixels()</span>, <span class="file-ref">win32.py:_norm_to_screen_pixel()</span>, <span class="file-ref">win32.py:_screen_pixel_to_norm()</span> — all pure math functions buried inside the subprocess-only win32 module. <span class="file-ref">router.py:_action_xy_str()</span> re-implements the "get x,y from action dict" pattern. The region string format (<code>"x1,y1,x2,y2"</code> in 0–1000 norm space) is parsed in at least 4 places.</p>
+</div>
+
+<div class="finding finding-medium">
+  <span class="badge badge-yellow">DUPLICATION</span> Queue draining pattern repeated
+  <p class="text-sm mt-1 text-slate-300"><code>franz.drain_queue()</code> exists but <span class="file-ref">router.py:_drain_swarm_into_state()</span> calls it and then does additional processing. The same drain-then-process pattern appears in <code>do_GET /state</code>, <code>do_GET /swarm</code>, and <code>engine_loop</code> — 4 call sites with slightly different post-drain logic.</p>
+</div>
+
+<div class="finding finding-medium">
+  <span class="badge badge-yellow">DUPLICATION</span> Region string passed through every subprocess call
+  <p class="text-sm mt-1 text-slate-300">Every function in <code>router.py</code> that calls a subprocess (<code>_subprocess_capture</code>, <code>_subprocess_cursor_pos</code>, <code>_subprocess_execute_one</code>, <code>_subprocess_execute_drag</code>) independently calls <code>franz.cfg(brain, "CAPTURE_REGION", "")</code> and appends <code>["--region", region]</code>. This 3-line pattern is copy-pasted 4 times.</p>
+</div>
+
+<!-- 3C Coupling / God Objects -->
+<div class="sub-title">3C · Tight Coupling &amp; God Objects</div>
+
+<div class="finding finding-critical">
+  <span class="badge badge-red">GOD OBJECT</span> <span class="file-ref">router.py:_ServerState</span> — 18 fields, no cohesion
+  <p class="text-sm mt-1 text-slate-300">Mixes: annotation pipeline state (<code>raw_b64</code>, <code>pending_seq</code>, <code>annotated_b64</code>, <code>annotated_ready</code>), brain annotation pipeline state (6 fields), display state (<code>display_text</code>, <code>display_actions</code>), swarm message buffer, phase/turn tracking, and error text. All protected by a single <code>threading.Lock</code>. Any change to any field requires acquiring the same lock, creating unnecessary contention.</p>
+</div>
+
+<div class="finding finding-critical">
+  <span class="badge badge-red">GOD MODULE</span> <span class="file-ref">franz.py</span> — entry point + bus + loader + config + helpers
+  <p class="text-sm mt-1 text-slate-300">Owns: 4 global queues, runtime overrides dict, all action/overlay builder functions, module loader, brain picker, region selector launcher, HTTP server startup, and the <code>cfg()</code> config accessor. Importing <code>franz</code> in a test pulls in all of this.</p>
+</div>
+
+<div class="finding finding-high">
+  <span class="badge badge-yellow">TIGHT COUPLING</span> <span class="file-ref">brain_bench.py</span> calls <code>franz.WIN32_PATH</code> directly
+  <p class="text-sm mt-1 text-slate-300">The brain reaches into <code>franz</code> to get the path to <code>win32.py</code> and spawns subprocesses itself. This means the brain is coupled to: the filesystem layout, the subprocess protocol, and the franz module's internal path constants. It cannot be tested without a real filesystem and a Windows environment.</p>
+</div>
+
+<div class="finding finding-high">
+  <span class="badge badge-yellow">TIGHT COUPLING</span> <span class="file-ref">router.py</span> accesses <code>franz._brain_annotate_request</code> and <code>franz._brain_annotate_result</code> directly
+  <p class="text-sm mt-1 text-slate-300">Private queues (underscore-prefixed) are accessed cross-module. The annotation bridge is split across <code>franz.py</code> (queue definitions + <code>request_annotation()</code>) and <code>router.py</code> (<code>_check_brain_annotation_request()</code>, POST handler). No single place owns the protocol.</p>
+</div>
+
+<!-- 3D Race Conditions -->
+<div class="sub-title">3D · Race Conditions</div>
+
+<div class="finding finding-critical">
+  <span class="badge badge-red">RACE</span> <span class="file-ref">router.py:_wait_for_annotation()</span> — seq check outside lock
+  <p class="text-sm mt-1 text-slate-300">The function sets <code>_STATE.pending_seq</code> inside the lock, then publishes <code>frame_ready</code> <em>outside</em> the lock. The panel could receive the event, fetch <code>/frame</code>, render, and POST <code>/annotated</code> before <code>_publish_state()</code> is called. The <code>/annotated</code> handler reads <code>_STATE.pending_seq</code> inside its own lock acquisition — this is safe, but the <code>_EVENT_BUS.publish</code> call at line ~310 reads <code>_STATE.raw_seq</code> without holding the lock.</p>
+</div>
+
+<div class="finding finding-high">
+  <span class="badge badge-yellow">RACE</span> <span class="file-ref">router.py:_EventBus.publish()</span> — subscriber list mutation during iteration
+  <p class="text-sm mt-1 text-slate-300">Dead subscribers are collected into a <code>dead</code> list and removed inside the same lock that protects iteration. If <code>put_nowait</code> raises, the subscriber is marked dead and removed — but the removal calls <code>list.remove()</code> which is O(n) and could silently fail if the subscriber was already removed by a concurrent <code>unsubscribe()</code> call (caught by <code>ValueError</code> but still a TOCTOU).</p>
+</div>
+
+<div class="finding finding-high">
+  <span class="badge badge-yellow">RACE</span> <span class="file-ref">brain_bench.py:_completed_labels</span> — global mutated from engine thread
+  <p class="text-sm mt-1 text-slate-300"><code>_completed_labels</code> is a module-level <code>set</code> mutated inside <code>_run_swarm()</code> which is called from the engine thread. If two turns somehow overlap (e.g. during the verify-call path where <code>_execute_drags</code> is called a second time), the set could be in an inconsistent state. No lock protects it.</p>
+</div>
+
+<!-- 3E Bugs -->
+<div class="sub-title">3E · Bugs &amp; Logic Flaws</div>
+
+<div class="finding finding-critical">
+  <span class="badge badge-red">BUG</span> <span class="file-ref">brain_bench.py:_parse_drags():L~195</span> — bounds check allows 1000 as valid
+  <p class="text-sm mt-1 text-slate-300">The check <code>all(0 &lt;= v &lt;= 1000 for v in vals)</code> accepts <code>1000</code> as a valid coordinate. The cursor label <code>"[1000,629]"</code> visible in the screenshot was parsed as <code>drag(1000,629,1000,629)</code> — a zero-length drag at the edge of the canvas. The label text leaked into the VLM context because the cursor overlay was rendered with coordinates outside the visible canvas area.</p>
+</div>
+
+<div class="finding finding-critical">
+  <span class="badge badge-red">BUG</span> <span class="file-ref">brain_bench.py:_is_done():L~200</span> — does not handle mixed drag+DONE response
+  <p class="text-sm mt-1 text-slate-300"><code>_is_done()</code> strips <code>&lt;think&gt;</code> tags then checks if the entire remaining string equals "DONE". When CONDUCTOR outputs 8 drag lines followed by "DONE", <code>_is_done()</code> correctly returns <code>False</code>. But <code>_parse_drags()</code> silently ignores the "DONE" line and returns all 8 drags. The verify-call then sees a completed canvas and returns "DONE", which triggers <code>_completed_labels = all strokes</code> — even if the drags failed or were wrong.</p>
+</div>
+
+<div class="finding finding-high">
+  <span class="badge badge-yellow">BUG</span> <span class="file-ref">brain_bench.py:on_vlm_response():L~305</span> — blank-canvas detection is fragile
+  <p class="text-sm mt-1 text-slate-300"><code>if not text or ("blank" in text.lower() and not _completed_labels)</code> — returns the first-turn prompt only if the word "blank" appears in the VLM response. If the VLM says "empty", "white", "nothing", or "no strokes", the condition fails and the swarm runs with an empty visionary report.</p>
+</div>
+
+<div class="finding finding-high">
+  <span class="badge badge-yellow">BUG</span> <span class="file-ref">router.py:engine_loop():~L390</span> — <code>previous_user_text</code> is empty on turn 1
+  <p class="text-sm mt-1 text-slate-300">The first VLM call uses <code>user_text_for_vlm = previous_user_text = ""</code>. An empty string is sent as the user message. <code>call_vlm()</code> substitutes a default "Observe the screenshot" text, but this substitution is invisible to the session log which records the empty string. The VISIONARY system prompt is also sent as the user-facing system prompt, which is correct, but the empty user text means the VLM has no task context on turn 1 — confirmed by turns.txt Turn 1 INPUT being blank.</p>
+</div>
+
+<div class="finding finding-medium">
+  <span class="badge badge-yellow">BUG</span> <span class="file-ref">router.py:do_POST /annotated</span> — seq mismatch returns 409 silently
+  <p class="text-sm mt-1 text-slate-300">If the panel sends an annotated frame with a stale seq (e.g. after reconnect), the engine blocks forever on <code>annotated_ready.wait(timeout=300)</code> and then falls back to the raw screenshot. The 409 response is logged nowhere server-side; the engine just times out after 5 minutes.</p>
+</div>
+
+<div class="finding finding-medium">
+  <span class="badge badge-yellow">FLAW</span> <span class="file-ref">win32.py</span> — <code>ctypes.WinDLL(...).SetProcessDpiAwareness(2)</code> at module import
+  <p class="text-sm mt-1 text-slate-300">Line ~90: DPI awareness is set as a side effect of importing the module. This makes <code>win32.py</code> impossible to import in any test environment (non-Windows, CI, etc.) and mutates process-level DPI state as a side effect of import.</p>
+</div>
+
+<div class="finding finding-low">
+  <span class="badge badge-blue">FLAW</span> <span class="file-ref">brain_bench.py:_latest_screenshot_b64()</span> — reads from disk instead of using live state
+  <p class="text-sm mt-1 text-slate-300">The CONDUCTOR agent receives the most recent PNG from the session log directory, not the current annotated frame held in <code>_STATE.annotated_b64</code>. This means CONDUCTOR sees a frame that may be 1–2 turns old if the filesystem write is slow, and it bypasses the annotation pipeline entirely.</p>
+</div>
+
+<!-- 3F Unused Config -->
+<div class="sub-title">3F · Unused / Redundant Config Options</div>
+<table>
+<thead><tr><th>Config Key</th><th>Defined In</th><th>Issue</th></tr></thead>
+<tbody>
+<tr><td><code>VLM_REQUEST_DELAY</code></td><td>brain_bench.py + router.py</td><td>Both modules implement their own sleep; brain uses constant, router uses cfg(). Double-delay possible.</td></tr>
+<tr><td><code>CAPTURE_REGION</code></td><td>brain_bench.py + franz._runtime_overrides</td><td>Brain reads via <code>franz._runtime_overrides</code> with a fallback to its own constant. Two sources of truth.</td></tr>
+<tr><td><code>COLOR_DONE / COLOR_PLANNED / COLOR_TARGET</code></td><td>brain_bench.py only</td><td>Not configurable from outside; hardcoded in overlay calls. Could be in a shared theme config.</td></tr>
+<tr><td><code>Win32Config.overlay_alpha</code></td><td>win32.py</td><td>Used only by the region selector overlay window. Not exposed to brain or router.</td></tr>
+<tr><td><code>Win32Config.selector_min_size</code></td><td>win32.py</td><td>Same — internal only, not configurable from CLI args.</td></tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ 4. NEW ARCH -->
+<section id="newarch">
+<div class="card">
+<div class="section-title">4 · Proposed New Architecture</div>
+
+<div class="sub-title">New Folder Layout</div>
+<pre><code class="language-text">franz/
+├── core/
+│   ├── __init__.py
+│   ├── bus.py            # Queues + SwarmBus (was: franz.py queues)
+│   ├── config.py         # Config accessor + runtime overrides
+│   ├── coords.py         # Pure coordinate math (extracted from win32.py)
+│   ├── session.py        # SessionLog (extracted from router.py)
+│   └── types.py          # Shared dataclasses / TypedDicts
+├── screen/
+│   ├── __init__.py
+│   ├── interface.py      # ScreenController ABC
+│   ├── win32_impl.py     # Win32 implementation (was: win32.py)
+│   └── subprocess_impl.py# SubprocessScreenController (wraps win32 CLI)
+├── engine/
+│   ├── __init__.py
+│   ├── engine.py         # engine_loop() (extracted from router.py)
+│   ├── vlm.py            # VLM HTTP client (deduplicated)
+│   └── annotation.py     # AnnotationBridge (frame ↔ panel roundtrip)
+├── brains/
+│   ├── __init__.py
+│   └── bench.py          # brain_bench (refactored, no global state)
+├── server/
+│   ├── __init__.py
+│   └── handler.py        # FranzHandler + _EventBus (was: router.py HTTP)
+├── panel.html            # Unchanged
+└── __main__.py           # Entry point (was: franz.main())</code></pre>
+
+<div class="sub-title">Clean Interfaces</div>
+
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+<div class="bg-[#0a1628] rounded-lg p-4 border border-blue-900">
+<div class="text-blue-300 font-semibold mb-2">ScreenController (ABC)</div>
+<pre><code class="language-python">class ScreenController(ABC):
+    @abstractmethod
+    def capture(self, region: str, w: int, h: int) -> bytes: ...
+    @abstractmethod
+    def cursor_pos(self, region: str) -> tuple[int, int]: ...
+    @abstractmethod
+    def drag(self, x1:int, y1:int, x2:int, y2:int, region:str) -> None: ...
+    @abstractmethod
+    def click(self, x:int, y:int, region:str) -> None: ...
+    # ... other actions</code></pre>
+<p class="text-xs text-slate-400 mt-1">Implemented by: <code>SubprocessScreenController</code> (prod), <code>MockScreenController</code> (tests)</p>
+</div>
+
+<div class="bg-[#0a1628] rounded-lg p-4 border border-blue-900">
+<div class="text-blue-300 font-semibold mb-2">VLMClient</div>
+<pre><code class="language-python">class VLMClient(Protocol):
+    def call(
+        self,
+        system: str,
+        user_text: str,
+        image_b64: str = "",
+        *,
+        temperature: float,
+        max_tokens: int,
+    ) -> str: ...</code></pre>
+<p class="text-xs text-slate-400 mt-1">Implemented by: <code>HttpVLMClient</code> (prod), <code>MockVLMClient</code> (tests)</p>
+</div>
+
+<div class="bg-[#0a1628] rounded-lg p-4 border border-blue-900">
+<div class="text-blue-300 font-semibold mb-2">SwarmBus</div>
+<pre><code class="language-python">@dataclass
+class SwarmBus:
+    actions: Queue[ActionDict]
+    overlays: Queue[OverlayDict]
+    swarm:   Queue[SwarmMsg]
+
+    def drain_actions(self) -> list[ActionDict]: ...
+    def drain_overlays(self) -> list[OverlayDict]: ...
+    def drain_swarm(self) -> list[SwarmMsg]: ...
+    def put_overlay(self, o: OverlayDict) -> None: ...
+    def put_swarm_msg(self, m: SwarmMsg) -> None: ...</code></pre>
+</div>
+
+<div class="bg-[#0a1628] rounded-lg p-4 border border-blue-900">
+<div class="text-blue-300 font-semibold mb-2">BrainInterface</div>
+<pre><code class="language-python">class BrainInterface(Protocol):
+    SYSTEM_PROMPT: str
+    VLM_ENDPOINT_URL: str
+    VLM_MODEL_NAME: str
+    # ... other config attrs
+
+    def on_vlm_response(
+        self,
+        text: str,
+        *,
+        bus: SwarmBus,
+        screen: ScreenController,
+    ) -> str: ...</code></pre>
+<p class="text-xs text-slate-400 mt-1">Dependencies injected — no global state, no franz imports inside brain</p>
+</div>
+
+<div class="bg-[#0a1628] rounded-lg p-4 border border-blue-900">
+<div class="text-blue-300 font-semibold mb-2">AnnotationBridge</div>
+<pre><code class="language-python">@dataclass
+class AnnotationBridge:
+    """Owns the frame→panel→annotated roundtrip."""
+    _pending: FrameRequest | None = None
+    _ready: Event = field(default_factory=Event)
+    _result: str = ""
+
+    def request(self, raw_b64: str,
+                overlays: list[OverlayDict],
+                timeout: float = 300) -> str: ...
+    def fulfill(self, seq: int, annotated_b64: str) -> bool: ...
+    def get_pending(self) -> FrameRequest | None: ...</code></pre>
+</div>
+
+<div class="bg-[#0a1628] rounded-lg p-4 border border-blue-900">
+<div class="text-blue-300 font-semibold mb-2">BenchmarkState (replaces global)</div>
+<pre><code class="language-python">@dataclass
+class BenchmarkState:
+    completed_labels: set[str] = field(default_factory=set)
+    target_strokes: list[Stroke] = field(
+        default_factory=lambda: list(TARGET_STROKES)
+    )
+
+    def is_complete(self) -> bool: ...
+    def match_and_record(self, drag: Drag) -> str | None: ...
+    def reset(self) -> None: ...</code></pre>
+<p class="text-xs text-slate-400 mt-1">Passed into <code>on_vlm_response</code> — fully serializable, testable, resettable</p>
+</div>
+
+</div>
+
+<div class="sub-title">Dependency Inversion Strategy</div>
+<div class="mermaid">
+graph TD
+    subgraph "New: Dependency Flow"
+        MAIN["__main__.py\n(wires everything)"]
+        ENGINE["engine.py\n(pure orchestration)"]
+        BRAIN["brains/bench.py\n(pure logic)"]
+        VLM["vlm.py\n(HttpVLMClient)"]
+        SCREEN["screen/subprocess_impl.py"]
+        BUS["core/bus.py\n(SwarmBus)"]
+        SESSION["core/session.py"]
+        HANDLER["server/handler.py"]
+        COORDS["core/coords.py\n(pure math)"]
+    end
+
+    MAIN --> ENGINE
+    MAIN --> HANDLER
+    MAIN --> VLM
+    MAIN --> SCREEN
+    MAIN --> BUS
+    MAIN --> SESSION
+    ENGINE -->|"injected: brain, vlm, screen, bus, session"| BRAIN
+    ENGINE --> VLM
+    ENGINE --> SCREEN
+    ENGINE --> BUS
+    ENGINE --> SESSION
+    SCREEN --> COORDS
+    BRAIN -->|"injected: bus, screen, vlm"| BUS
+    BRAIN --> COORDS
+    HANDLER -->|"reads state via EventBus"| BUS
+</div>
+<p class="text-sm text-slate-400 mt-2">Key principle: <strong>nothing imports franz</strong>. The bus, screen controller, and VLM client are injected at startup. Brains receive their dependencies as constructor/call arguments.</p>
+</div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ 5. PER-FILE -->
+<section id="perfile">
+<div class="card">
+<div class="section-title">5 · Per-File Modularization Plan</div>
+
+<table>
+<thead>
+<tr><th>File</th><th>What Stays</th><th>What Moves Out</th><th>What Gets Deleted</th></tr>
+</thead>
+<tbody>
+<tr>
+  <td><span class="file-ref">franz.py</span></td>
+  <td>Nothing — becomes <code>__main__.py</code> entry point only (~40 lines)</td>
+  <td>
+    Queues → <code>core/bus.py:SwarmBus</code><br>
+    <code>cfg()</code> → <code>core/config.py</code><br>
+    <code>_load_module()</code> → <code>core/loader.py</code><br>
+    <code>_pick_brain()</code> → <code>__main__.py</code><br>
+    <code>_run_select_region()</code> → <code>__main__.py</code><br>
+    Action builders → <code>core/actions.py</code><br>
+    <code>drain_queue()</code> → <code>core/bus.py</code>
+  </td>
+  <td>
+    <code>dot()</code>, <code>box()</code>, <code>line()</code> (unused)<br>
+    <code>_brain_annotate_request/result</code> queues → into <code>AnnotationBridge</code>
+  </td>
+</tr>
+<tr>
+  <td><span class="file-ref">router.py</span></td>
+  <td>
+    <code>FranzHandler</code> HTTP routing<br>
+    <code>_EventBus</code> SSE pub/sub<br>
+    <code>_PanelReady</code> bridge signal
+  </td>
+  <td>
+    <code>engine_loop()</code> → <code>engine/engine.py</code><br>
+    <code>call_vlm()</code> → <code>engine/vlm.py</code><br>
+    <code>SessionLog</code> → <code>core/session.py</code><br>
+    <code>_ServerState</code> → split into <code>AnnotationBridge</code> + <code>EngineState</code><br>
+    <code>_make_cursor_overlay()</code> → <code>engine/overlays.py</code><br>
+    <code>_subprocess_*</code> → <code>screen/subprocess_impl.py</code>
+  </td>
+  <td>
+    <code>_emit_swarm()</code> (redundant wrapper)<br>
+    <code>_check_brain_annotation_request()</code> → absorbed into <code>AnnotationBridge</code>
+  </td>
+</tr>
+<tr>
+  <td><span class="file-ref">brain_bench.py</span></td>
+  <td>
+    All prompt strings<br>
+    <code>TARGET_STROKES</code><br>
+    <code>_parse_drags()</code> (fixed)<br>
+    <code>_is_done()</code> (fixed)<br>
+    <code>_match_stroke()</code><br>
+    <code>_queue_target_overlays()</code><br>
+    <code>on_vlm_response()</code> (refactored)
+  </td>
+  <td>
+    <code>_call_agent()</code> → use injected <code>VLMClient</code><br>
+    <code>_execute_drags()</code> → use injected <code>ScreenController</code><br>
+    <code>_capture_fresh_b64()</code> → use injected <code>ScreenController</code><br>
+    <code>_latest_screenshot_b64()</code> → use injected frame from engine
+  </td>
+  <td>
+    <code>_completed_labels</code> global → <code>BenchmarkState</code> instance<br>
+    All config constants that are only read by engine (CAPTURE_*, CURSOR_*, etc.) → move to a <code>BenchConfig</code> dataclass
+  </td>
+</tr>
+<tr>
+  <td><span class="file-ref">win32.py</span></td>
+  <td>
+    All Win32 implementation functions<br>
+    <code>Win32Config</code> dataclass<br>
+    <code>main()</code> CLI dispatcher
+  </td>
+  <td>
+    Coordinate math (<code>_parse_region</code>, <code>_norm_*</code>, <code>_screen_pixel_to_norm</code>) → <code>core/coords.py</code>
+  </td>
+  <td>
+    <code>ctypes.WinDLL(...).SetProcessDpiAwareness(2)</code> at module level → move inside <code>_setup_bindings()</code> or a lazy-init guard
+  </td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ 6. TESTS -->
+<section id="tests">
+<div class="card">
+<div class="section-title">6 · Comprehensive Test Plan</div>
+
+<div class="sub-title">6A · Mocking Strategy</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+<div class="bg-[#0a1628] rounded-lg p-4 border border-blue-900">
+<div class="text-blue-300 font-semibold mb-2">ctypes / win32</div>
+<pre><code class="language-python"># screen/interface.py defines ABC
+# tests use MockScreenController:
+class MockScreenController(ScreenController):
+    def __init__(self):
+        self.drags: list[tuple] = []
+        self.captures: list[bytes] = []
+        self._capture_iter = iter([])
+
+    def capture(self, region, w, h) -> bytes:
+        return next(self._capture_iter, b"")
+
+    def drag(self, x1, y1, x2, y2, region):
+        self.drags.append((x1, y1, x2, y2))
+
+    def cursor_pos(self, region):
+        return (500, 500)</code></pre>
+</div>
+<div class="bg-[#0a1628] rounded-lg p-4 border border-blue-900">
+<div class="text-blue-300 font-semibold mb-2">VLM HTTP calls</div>
+<pre><code class="language-python">class MockVLMClient:
+    def __init__(self, responses: list[str]):
+        self._responses = iter(responses)
+
+    def call(self, system, user_text,
+             image_b64="", **kwargs) -> str:
+        return next(self._responses, "")
+
+# Usage in test:
+vlm = MockVLMClient([
+    "drag(500,100, 150,700)",
+    "DONE",
+])</code></pre>
+</div>
+<div class="bg-[#0a1628] rounded-lg p-4 border border-blue-900">
+<div class="text-blue-300 font-semibold mb-2">subprocess calls</div>
+<pre><code class="language-python"># With SubprocessScreenController extracted,
+# tests never need subprocess at all.
+# For integration tests that do test the CLI:
+import subprocess
+from unittest.mock import patch, MagicMock
+
+with patch("subprocess.run") as mock_run:
+    mock_run.return_value = MagicMock(
+        returncode=0,
+        stdout=png_fixture_bytes,
+    )
+    result = controller.capture("", 640, 640)</code></pre>
+</div>
+<div class="bg-[#0a1628] rounded-lg p-4 border border-blue-900">
+<div class="text-blue-300 font-semibold mb-2">HTTP server (router)</div>
+<pre><code class="language-python">from http.client import HTTPConnection
+import threading
+
+def make_test_server(bus, bridge):
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        lambda *a: FranzHandler(*a, bus=bus,
+                                bridge=bridge)
+    )
+    t = threading.Thread(target=server.serve_forever)
+    t.daemon = True
+    t.start()
+    return server, server.server_address[1]</code></pre>
+</div>
+</div>
+
+<div class="sub-title">6B · Unit Tests per Module</div>
+
+<table class="mb-4">
+<thead><tr><th>Module</th><th>Test File</th><th>Key Test Cases</th></tr></thead>
+<tbody>
+<tr>
+  <td><span class="file-ref">core/coords.py</span></td>
+  <td><code>tests/test_coords.py</code></td>
+  <td>
+    <code>test_norm_to_pixel_full_screen()</code> — 0,0,1000,1000 region maps correctly<br>
+    <code>test_norm_to_pixel_sub_region()</code> — sub-region clamps and scales<br>
+    <code>test_pixel_to_norm_roundtrip()</code> — norm→pixel→norm is identity<br>
+    <code>test_parse_region_valid()</code> / <code>test_parse_region_invalid()</code><br>
+    <code>test_norm_swap_if_inverted()</code> — x2&lt;x1 gets swapped
+  </td>
+</tr>
+<tr>
+  <td><span class="file-ref">core/bus.py</span></td>
+  <td><code>tests/test_bus.py</code></td>
+  <td>
+    <code>test_drain_empty()</code> — returns []<br>
+    <code>test_drain_multiple()</code> — drains all items<br>
+    <code>test_put_overlay_threadsafe()</code> — concurrent puts don't lose items<br>
+    <code>test_swarm_message_fields()</code> — ts field is set
+  </td>
+</tr>
+<tr>
+  <td><span class="file-ref">core/session.py</span></td>
+  <td><code>tests/test_session.py</code></td>
+  <td>
+    <code>test_create_makes_dir(tmp_path)</code><br>
+    <code>test_write_turn_format(tmp_path)</code> — parses back correctly<br>
+    <code>test_write_swarm_all_directions(tmp_path)</code> — input/output/error/unknown<br>
+    <code>test_save_png_roundtrip(tmp_path)</code> — bytes in == bytes out
+  </td>
+</tr>
+<tr>
+  <td><span class="file-ref">engine/vlm.py</span></td>
+  <td><code>tests/test_vlm.py</code></td>
+  <td>
+    <code>test_call_with_image()</code> — image_url content type set<br>
+    <code>test_call_without_image()</code> — plain text content<br>
+    <code>test_call_network_error()</code> — returns "" on exception<br>
+    <code>test_call_bad_json()</code> — returns "" gracefully<br>
+    <code>test_call_emits_swarm_messages()</code> — input+output msgs queued
+  </td>
+</tr>
+<tr>
+  <td><span class="file-ref">engine/annotation.py</span></td>
+  <td><code>tests/test_annotation.py</code></td>
+  <td>
+    <code>test_fulfill_correct_seq()</code> — unblocks waiter<br>
+    <code>test_fulfill_wrong_seq()</code> — returns False, waiter stays blocked<br>
+    <code>test_request_timeout()</code> — returns raw_b64 after timeout<br>
+    <code>test_concurrent_request_fulfill()</code> — threading correctness
+  </td>
+</tr>
+<tr>
+  <td><span class="file-ref">brains/bench.py</span></td>
+  <td><code>tests/test_bench_brain.py</code></td>
+  <td>
+    <code>test_parse_drags_valid()</code> — standard drag lines<br>
+    <code>test_parse_drags_rejects_1000_edge()</code> — <strong>regression for turns.txt bug</strong><br>
+    <code>test_parse_drags_ignores_done_line()</code><br>
+    <code>test_is_done_pure_done()</code><br>
+    <code>test_is_done_mixed_drag_done()</code> — <strong>regression: must return False</strong><br>
+    <code>test_is_done_strips_think_tags()</code><br>
+    <code>test_match_stroke_forward()</code><br>
+    <code>test_match_stroke_reverse()</code><br>
+    <code>test_match_stroke_no_match()</code><br>
+    <code>test_on_vlm_response_blank_canvas()</code> — returns FIRST_TURN_PROMPT<br>
+    <code>test_on_vlm_response_runs_swarm()</code> — mock VLM + mock screen<br>
+    <code>test_benchmark_state_complete()</code> — all 8 strokes → is_complete()<br>
+    <code>test_benchmark_state_reset()</code>
+  </td>
+</tr>
+<tr>
+  <td><span class="file-ref">server/handler.py</span></td>
+  <td><code>tests/test_handler.py</code></td>
+  <td>
+    <code>test_get_root_returns_html()</code><br>
+    <code>test_get_frame_returns_seq_and_b64()</code><br>
+    <code>test_post_annotated_correct_seq()</code> — 200 + event published<br>
+    <code>test_post_annotated_wrong_seq()</code> — 409<br>
+    <code>test_post_annotated_short_image()</code> — 400<br>
+    <code>test_get_swarm_after_param()</code> — pagination<br>
+    <code>test_sse_receives_state_event()</code> — SSE stream integration<br>
+    <code>test_options_cors_headers()</code>
+  </td>
+</tr>
+<tr>
+  <td><span class="file-ref">screen/subprocess_impl.py</span></td>
+  <td><code>tests/test_screen_subprocess.py</code></td>
+  <td>
+    <code>test_capture_builds_correct_cmd()</code> — mock subprocess.run<br>
+    <code>test_capture_with_region()</code> — --region arg present<br>
+    <code>test_drag_builds_correct_cmd()</code><br>
+    <code>test_capture_failure_returns_empty()</code> — rc != 0<br>
+    <code>test_cursor_pos_parses_output()</code>
+  </td>
+</tr>
+</tbody>
+</table>
+
+<div class="sub-title">6C · Regression Tests from turns.txt</div>
+<pre><code class="language-python"># tests/test_bench_brain.py
+
+def test_parse_drags_rejects_cursor_label_artifact():
+    """Regression: turns.txt Turn 1 — cursor label '[1000,629]' leaked into VLM output."""
+    raw = "drag(1000,629, 1000,629)"
+    # After fix: 1000 is boundary — decide: reject or accept?
+    # Correct fix: change bound to < 1000 (exclusive) OR validate non-zero length
+    result = parse_drags(raw)
+    assert result == [], "Zero-length drag at boundary must be rejected"
+
+
+def test_is_done_does_not_trigger_on_mixed_response():
+    """Regression: turns.txt Turn 2 — CONDUCTOR output 8 drags + DONE on same response."""
+    raw = (
+        "drag(500,900, 850,300)\n"
+        "drag(850,300, 150,300)\n"
+        "drag(150,300, 500,900)\n"
+        "DONE"
+    )
+    assert is_done(raw) is False, "Mixed drag+DONE must not be treated as DONE"
+    drags = parse_drags(raw)
+    assert len(drags) == 3, "Drags before DONE must still be parsed"
+
+
+def test_verify_done_does_not_mark_all_complete_without_validation():
+    """Regression: verify-call returning DONE forced _completed_labels = all strokes."""
+    state = BenchmarkState()
+    vlm = MockVLMClient(["drag(500,100, 150,700)", "DONE"])
+    screen = MockScreenController()
+    # After 1 drag executed, verify returns DONE
+    # State should only have 1 matched stroke, not all 8
+    result_text = run_swarm_turn("some visionary report", state, vlm, screen)
+    assert len(state.completed_labels) == 1  # only up-1 matched
+    assert not state.is_complete()</code></pre>
+
+<div class="sub-title">6D · Integration &amp; End-to-End Tests</div>
+<table>
+<thead><tr><th>Test</th><th>Scope</th><th>Approach</th></tr></thead>
+<tbody>
+<tr>
+  <td>Full engine turn cycle</td>
+  <td>engine + annotation bridge + session</td>
+  <td>Mock VLM + mock screen + real AnnotationBridge. Spawn engine thread, simulate panel posting annotated frame, assert session log written.</td>
+</tr>
+<tr>
+  <td>HTTP server + SSE</td>
+  <td>FranzHandler + EventBus</td>
+  <td>Start test server on port 0. Connect SSE client in thread. Publish event. Assert SSE client receives it within 2s.</td>
+</tr>
+<tr>
+  <td>Brain → screen → overlay pipeline</td>
+  <td>bench brain + mock screen + bus</td>
+  <td>Feed 8 turns of mock VLM responses (one drag per turn). Assert all 8 strokes executed on mock screen and all overlays queued green.</td>
+</tr>
+<tr>
+  <td>win32 CLI round-trip (Windows only)</td>
+  <td>win32.py subprocess</td>
+  <td>Marked <code>@pytest.mark.skipif(sys.platform != "win32")</code>. Spawn capture subprocess, assert PNG header in stdout. Spawn cursor_pos, assert "x,y" format.</td>
+</tr>
+</tbody>
+</table>
+
+<div class="sub-title">6E · Coverage Targets</div>
+<table>
+<thead><tr><th>Module</th><th>Target</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td><code>core/coords.py</code></td><td class="text-green-400">100%</td><td>Pure math — no excuses</td></tr>
+<tr><td><code>core/bus.py</code></td><td class="text-green-400">100%</td><td>Pure queue wrappers</td></tr>
+<tr><td><code>core/session.py</code></td><td class="text-green-400">95%</td><td>File I/O paths</td></tr>
+<tr><td><code>engine/vlm.py</code></td><td class="text-green-400">90%</td><td>Network error paths</td></tr>
+<tr><td><code>engine/annotation.py</code></td><td class="text-green-400">95%</td><td>Threading paths</td></tr>
+<tr><td><code>brains/bench.py</code></td><td class="text-green-400">90%</td><td>All parse/match/state paths</td></tr>
+<tr><td><code>server/handler.py</code></td><td class="text-yellow-400">80%</td><td>SSE streaming hard to cover fully</td></tr>
+<tr><td><code>screen/subprocess_impl.py</code></td><td class="text-yellow-400">85%</td><td>Mock subprocess.run</td></tr>
+<tr><td><code>screen/win32_impl.py</code></td><td class="text-yellow-400">60%</td><td>Windows-only; ctypes hard to mock</td></tr>
+</tbody>
+</table>
+
+<div class="sub-title">6F · pytest Configuration</div>
+<pre><code class="language-toml"># pyproject.toml
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "windows: requires Windows (ctypes)",
+    "integration: requires running server",
+    "slow: long-running tests",
+]
+addopts = "--tb=short -q"
+
+[tool.coverage.run]
+source = ["franz"]
+omit = ["franz/screen/win32_impl.py"]  # Windows-only
+
+[tool.coverage.report]
+fail_under = 85</code></pre>
+</div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ 7. ROADMAP -->
+<section id="roadmap">
+<div class="card">
+<div class="section-title">7 · Step-by-Step Migration Roadmap</div>
+<p class="text-sm text-slate-400 mb-4">Ordered for minimal disruption — each phase leaves the system runnable. Estimated effort assumes one focused developer.</p>
+
+<div class="step">
+  <div class="step-num">1</div>
+  <div>
+    <div class="font-semibold text-blue-300">Phase 1 — Extract pure modules (no behavior change) <span class="badge badge-green ml-2">~2h</span></div>
+    <ul class="text-sm text-slate-300 mt-1 list-disc list-inside space-y-1">
+      <li>Create <code>core/coords.py</code> — copy 5 functions from win32.py, add <code>__all__</code></li>
+      <li>Create <code>core/session.py</code> — move <code>SessionLog</code> + <code>_utc_stamp()</code> from router.py</li>
+      <li>Create <code>core/bus.py</code> — move 4 queues + <code>drain_queue()</code> + <code>swarm_message()</code> from franz.py</li>
+      <li>Update imports in router.py and brain_bench.py to use new locations</li>
+      <li>Run system — verify identical behavior</li>
+      <li><strong>Deliverable:</strong> 3 new fully-testable modules, zero behavior change</li>
+    </ul>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">2</div>
+  <div>
+    <div class="font-semibold text-blue-300">Phase 2 — Fix the two critical bugs <span class="badge badge-red ml-2">~1h</span></div>
+    <ul class="text-sm text-slate-300 mt-1 list-disc list-inside space-y-1">
+      <li><strong>Bug 1:</strong> In <code>_parse_drags()</code>, add zero-length drag rejection: <code>if x1==x2 and y1==y2: continue</code></li>
+      <li><strong>Bug 2:</strong> In <code>_run_swarm()</code> verify-call path, replace <code>_completed_labels = all strokes</code> with actual stroke matching from the verify drags</li>
+      <li>Write regression tests for both (from turns.txt evidence)</li>
+      <li><strong>Deliverable:</strong> Benchmark produces correct results</li>
+    </ul>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">3</div>
+  <div>
+    <div class="font-semibold text-blue-300">Phase 3 — Deduplicate VLM call logic <span class="badge badge-yellow ml-2">~2h</span></div>
+    <ul class="text-sm text-slate-300 mt-1 list-disc list-inside space-y-1">
+      <li>Create <code>engine/vlm.py:HttpVLMClient</code> with <code>call(system, user_text, image_b64, **kwargs)</code></li>
+      <li>Replace <code>router.py:call_vlm()</code> to delegate to <code>HttpVLMClient</code></li>
+      <li>Replace <code>brain_bench.py:_call_agent()</code> to accept injected <code>VLMClient</code></li>
+      <li>Write unit tests for <code>HttpVLMClient</code> with mocked urllib</li>
+      <li><strong>Deliverable:</strong> Single VLM call implementation, mockable in tests</li>
+    </ul>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">4</div>
+  <div>
+    <div class="font-semibold text-blue-300">Phase 4 — Extract ScreenController interface <span class="badge badge-yellow ml-2">~3h</span></div>
+    <ul class="text-sm mt-1 text-slate-300 list-disc list-inside space-y-1">
+      <li>Create <code>screen/interface.py:ScreenController</code> ABC</li>
+      <li>Create <code>screen/subprocess_impl.py:SubprocessScreenController</code> — move all <code>_subprocess_*</code> functions from router.py</li>
+      <li>Update <code>engine_loop()</code> to accept <code>screen: ScreenController</code> parameter</li>
+      <li>Update <code>brain_bench.py:_execute_drags()</code> and <code>_capture_fresh_b64()</code> to accept injected screen</li>
+      <li>Fix <code>win32.py</code>: move DPI awareness call inside <code>_setup_bindings()</code> guard</li>
+      <li>Write <code>MockScreenController</code> and unit tests</li>
+      <li><strong>Deliverable:</strong> Brain and engine testable without Windows</li>
+    </ul>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">5</div>
+  <div>
+    <div class="font-semibold text-blue-300">Phase 5 — Eliminate global state in brain <span class="badge badge-yellow ml-2">~2h</span></div>
+    <ul class="text-sm mt-1 text-slate-300 list-disc list-inside space-y-1">
+      <li>Create <code>BenchmarkState</code> dataclass in <code>brains/bench.py</code></li>
+      <li>Change <code>on_vlm_response(text, *, state: BenchmarkState, bus, screen, vlm)</code> signature</li>
+      <li>Update <code>engine_loop()</code> to instantiate and pass <code>BenchmarkState</code></li>
+      <li>Write state-based unit tests (create state, run turn, assert state)</li>
+      <li><strong>Deliverable:</strong> Brain is a pure function — fully unit-testable</li>
+    </ul>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">6</div>
+  <div>
+    <div class="font-semibold text-blue-300">Phase 6 — Decompose _ServerState god-object <span class="badge badge-yellow ml-2">~3h</span></div>
+    <ul class="text-sm mt-1 text-slate-300 list-disc list-inside space-y-1">
+      <li>Create <code>engine/annotation.py:AnnotationBridge</code> — owns frame/annotated roundtrip with its own lock</li>
+      <li>Create <code>engine/engine_state.py:EngineState</code> — owns phase, turn, display_text, display_actions</li>
+      <li>Move brain annotation pipeline into <code>AnnotationBridge</code> (absorb <code>_check_brain_annotation_request</code>)</li>
+      <li>Update <code>FranzHandler</code> to reference the two new objects instead of <code>_STATE</code></li>
+      <li><strong>Deliverable:</strong> No more god-object; each concern has its own lock</li>
+    </ul>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">7</div>
+  <div>
+    <div class="font-semibold text-blue-300">Phase 7 — Clean up franz.py → __main__.py <span class="badge badge-green ml-2">~1h</span></div>
+    <ul class="text-sm mt-1 text-slate-300 list-disc list-inside space-y-1">
+      <li>Delete unused helpers: <code>dot()</code>, <code>box()</code>, <code>line()</code>, <code>_emit_swarm()</code></li>
+      <li>Reduce franz.py to ~40-line entry point that wires all injected dependencies</li>
+      <li>Remove circular import: router no longer imports franz; receives bus/bridge as constructor args</li>
+      <li><strong>Deliverable:</strong> Clean dependency graph, no circular imports</li>
+    </ul>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num">8</div>
+  <div>
+    <div class="font-semibold text-blue-300">Phase 8 — CI + coverage enforcement <span class="badge badge-green ml-2">~1h</span></div>
+    <ul class="text-sm mt-1 text-slate-300 list-disc list-inside space-y-1">
+      <li>Add <code>pyproject.toml</code> with pytest + coverage config</li>
+      <li>Add <code>.github/workflows/test.yml</code> (ubuntu-latest, Python 3.12, skip Windows-marked tests)</li>
+      <li>Enforce 85% coverage gate</li>
+      <li><strong>Deliverable:</strong> Every PR is automatically validated</li>
+    </ul>
+  </div>
+</div>
+
+<div class="mt-4 bg-[#0a1628] rounded-lg p-4 border border-blue-900">
+<div class="text-blue-300 font-semibold mb-2">Total Effort Estimate</div>
+<table>
+<thead><tr><th>Phase</th><th>Effort</th><th>Risk</th><th>Value</th></tr></thead>
+<tbody>
+<tr><td>1 — Extract pure modules</td><td>2h</td><td class="text-green-400">Low</td><td class="text-green-400">High</td></tr>
+<tr><td>2 — Fix critical bugs</td><td>1h</td><td class="text-green-400">Low</td><td class="text-red-400">Critical</td></tr>
+<tr><td>3 — Deduplicate VLM</td><td>2h</td><td class="text-green-400">Low</td><td class="text-yellow-400">Medium</td></tr>
+<tr><td>4 — ScreenController</td><td>3h</td><td class="text-yellow-400">Medium</td><td class="text-green-400">High</td></tr>
+<tr><td>5 — Eliminate global state</td><td>2h</td><td class="text-yellow-400">Medium</td><td class="text-green-400">High</td></tr>
+<tr><td>6 — Decompose _ServerState</td><td>3h</td><td class="text-yellow-400">Medium</td><td class="text-yellow-400">Medium</td></tr>
+<tr><td>7 — Clean franz.py</td><td>1h</td><td class="text-green-400">Low</td><td class="text-yellow-400">Medium</td></tr>
+<tr><td>8 — CI + coverage</td><td>1h</td><td class="text-green-400">Low</td><td class="text-green-400">High</td></tr>
+<tr class="font-bold"><td>Total</td><td>~15h</td><td>—</td><td>—</td></tr>
+</tbody>
+</table>
+</div>
+</div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ 8. QUICK WINS -->
+<section id="quickwins">
+<div class="card">
+<div class="section-title">8 · Quick Wins (Do Today)</div>
+<p class="text-sm text-slate-400 mb-3">Each item below is &lt;30 minutes, zero risk, immediately improves correctness or testability.</p>
+
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+<div class="bg-[#0a1628] rounded-lg p-4 border border-green-900">
+<div class="text-green-400 font-semibold mb-2">🐛 Fix: Reject zero-length drags</div>
+<pre><code class="language-python"># brain_bench.py _parse_drags() — add after vals extraction:
+if vals[0] == vals[2] and vals[1] == vals[3]:
+    continue  # zero-length drag is always wrong</code></pre>
+<p class="text-xs text-slate-400 mt-1">Fixes the <code>drag(1000,629,1000,629)</code> bug from turns.txt Turn 1</p>
+</div>
+
+<div class="bg-[#0a1628] rounded-lg p-4 border border-green-900">
+<div class="text-green-400 font-semibold mb-2">🐛 Fix: Verify-call DONE must not mark all complete</div>
+<pre><code class="language-python"># brain_bench.py _run_swarm() verify block — replace:
+# else:
+#     _completed_labels = {label for ...}
+# with:
+else:
+    pass  # DONE from verify = no more strokes needed
+    # _completed_labels already has what was matched</code></pre>
+<p class="text-xs text-slate-400 mt-1">Fixes premature completion from turns.txt Turn 2</p>
+</div>
+
+<div class="bg-[#0a1628] rounded-lg p-4 border border-green-900">
+<div class="text-green-400 font-semibold mb-2">🔧 Fix: Blank canvas detection</div>
+<pre><code class="language-python"># brain_bench.py on_vlm_response() — replace:
+BLANK_WORDS = {"blank","empty","nothing","white","no strokes","no lines"}
+is_blank = not text or (
+    not _completed_labels and
+    any(w in text.lower() for w in BLANK_WORDS)
+)
+if is_blank:
+    return FIRST_TURN_PROMPT</code></pre>
+</div>
+
+<div class="bg-[#0a1628] rounded-lg p-4 border border-green-900">
+<div class="text-green-400 font-semibold mb-2">🔧 Fix: DPI awareness import side-effect</div>
+<pre><code class="language-python"># win32.py — wrap in function, call lazily:
+_dpi_set = False
+def _ensure_dpi_aware():
+    global _dpi_set
+    if not _dpi_set:
+        ctypes.WinDLL("shcore").SetProcessDpiAwareness(2)
+        _dpi_set = True
+# Call _ensure_dpi_aware() at start of _do_capture(), _do_click(), etc.</code></pre>
+</div>
+
+<div class="bg-[#0a1628] rounded-lg p-4 border border-green-900">
+<div class="text-green-400 font-semibold mb-2">🧹 Delete dead code</div>
+<pre><code class="language-python"># franz.py — delete these unused helpers:
+# dot(), box(), line()
+# (nothing in the codebase calls them)
+
+# router.py — inline _emit_swarm():
+# Replace: _emit_swarm(agent, dir, text, img, sys)
+# With:    franz.swarm_message(agent, dir, text, img, sys)</code></pre>
+</div>
+
+<div class="bg-[#0a1628] rounded-lg p-4 border border-green-900">
+<div class="text-green-400 font-semibold mb-2">🔧 Fix: First turn has empty user_text</div>
+<pre><code class="language-python"># router.py engine_loop() — initialize with a real prompt:
+previous_user_text: str = getattr(
+    brain, "FIRST_TURN_PROMPT",
+    "Observe the canvas and describe what you see."
+)
+# This ensures Turn 1 INPUT in turns.txt is not blank</code></pre>
+</div>
+
+<div class="bg-[#0a1628] rounded-lg p-4 border border-green-900">
+<div class="text-green-400 font-semibold mb-2">🔧 Deduplicate region arg assembly</div>
+<pre><code class="language-python"># router.py — extract helper used in 4 places:
+def _region_args(brain: Any) -> list[str]:
+    region = franz.cfg(brain, "CAPTURE_REGION", "")
+    return ["--region", region] if region else []
+
+# Usage:
+cmd = [sys.executable, str(WIN32_PATH), "capture",
+       "--width", str(w), "--height", str(h),
+       *_region_args(brain)]</code></pre>
+</div>
+
+<div class="bg-[#0a1628] rounded-lg p-4 border border-green-900">
+<div class="text-green-400 font-semibold mb-2">📝 Add type: ignore guard for win32 import</div>
+<pre><code class="language-python"># At top of win32.py — guard for non-Windows:
+import sys
+if sys.platform != "win32":
+    raise ImportError(
+        "win32.py requires Windows. "
+        "Use SubprocessScreenController on other platforms."
+    )</code></pre>
+<p class="text-xs text-slate-400 mt-1">Makes the import failure explicit and informative instead of a cryptic ctypes error</p>
+</div>
+
+</div>
+</div>
+</section>
+
+<footer class="text-center text-slate-600 text-xs py-8">
+  Generated by Amazon Q Developer · Franz-AI Star-of-David Audit
+</footer>
+
+<script>
+mermaid.initialize({startOnLoad:true,theme:'dark',themeVariables:{primaryColor:'#1e3a5f',primaryTextColor:'#e2e8f0',primaryBorderColor:'#3b82f6',lineColor:'#60a5fa',secondaryColor:'#112240',tertiaryColor:'#0a1628'}});
+document.addEventListener('DOMContentLoaded',()=>{
+  document.querySelectorAll('pre code').forEach(el=>{
+    hljs.highlightElement(el);
+  });
+});
+</script>
+</body>
+</html>
